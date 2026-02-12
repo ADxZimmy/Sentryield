@@ -43,7 +43,8 @@ describe("TreasuryVault + CurvanceTargetAdapter", function () {
       executor.address,
       guardian.address,
       MOVEMENT_CAP_BPS,
-      MAX_DEADLINE_DELAY
+      MAX_DEADLINE_DELAY,
+      await usdc.getAddress()
     );
 
     const vaultAddress = await vault.getAddress();
@@ -455,6 +456,99 @@ describe("TreasuryVault + CurvanceTargetAdapter", function () {
 
       expect(await pool1.balanceOf(await vault.getAddress())).to.equal(entered - lpToRotate);
       expect(await pool2.balanceOf(await vault.getAddress())).to.equal(lpToRotate);
+    });
+  });
+
+  describe("C) User deposit/withdraw flow", function () {
+    async function userFlowFixture() {
+      const [owner, executor, guardian, depositor, stranger] = await ethers.getSigners();
+      const mockErc20Factory = await ethers.getContractFactory("MockERC20");
+      const usdc = await mockErc20Factory.deploy("USD Coin", "USDC", 6);
+      const poolFactory = await ethers.getContractFactory("MockCurvancePool");
+      const pool = await poolFactory.deploy(
+        owner.address,
+        await usdc.getAddress(),
+        "Curvance cUSDC One",
+        "cUSDC1"
+      );
+      const adapterFactory = await ethers.getContractFactory("CurvanceTargetAdapter");
+      const adapter = await adapterFactory.deploy();
+      const vaultFactory = await ethers.getContractFactory("TreasuryVault");
+      const vault = await vaultFactory.deploy(
+        owner.address,
+        executor.address,
+        guardian.address,
+        MOVEMENT_CAP_BPS,
+        MAX_DEADLINE_DELAY,
+        await usdc.getAddress()
+      );
+
+      await vault.setTokenAllowlist(await usdc.getAddress(), true);
+      await vault.setTokenAllowlist(await pool.getAddress(), true);
+      await vault.setTargetAllowlist(await adapter.getAddress(), true);
+      await vault.setTargetAllowlist(await pool.getAddress(), true);
+      await vault.setPoolAllowlist(await pool.getAddress(), true);
+
+      await usdc.mint(depositor.address, 1_000_000n * ONE_USDC);
+
+      return { owner, executor, guardian, depositor, stranger, usdc, pool, adapter, vault };
+    }
+
+    it("deposits and withdraws to wallet while parked in USDC", async function () {
+      const { depositor, usdc, vault } = await loadFixture(userFlowFixture);
+      const depositAmount = 200_000n * ONE_USDC;
+      await usdc.connect(depositor).approve(await vault.getAddress(), depositAmount);
+
+      await expect(vault.connect(depositor).depositUsdc(depositAmount))
+        .to.emit(vault, "UserDeposited")
+        .withArgs(depositor.address, depositAmount, depositAmount, anyValue);
+
+      expect(await vault.userShares(depositor.address)).to.equal(depositAmount);
+      expect(await vault.maxWithdrawToWallet(depositor.address)).to.equal(depositAmount);
+
+      const withdrawAmount = 50_000n * ONE_USDC;
+      await expect(vault.connect(depositor).withdrawToWallet(withdrawAmount, depositor.address))
+        .to.emit(vault, "UserWithdrawn")
+        .withArgs(depositor.address, depositor.address, withdrawAmount, withdrawAmount, anyValue);
+
+      expect(await usdc.balanceOf(depositor.address)).to.equal(
+        1_000_000n * ONE_USDC - depositAmount + withdrawAmount
+      );
+    });
+
+    it("blocks deposits and withdrawals while a live LP position is open", async function () {
+      const { depositor, executor, usdc, pool, adapter, vault } = await loadFixture(userFlowFixture);
+      const depositAmount = 200_000n * ONE_USDC;
+      await usdc.connect(depositor).approve(await vault.getAddress(), depositAmount);
+      await vault.connect(depositor).depositUsdc(depositAmount);
+
+      const enterRequest = await makeEnterRequest({
+        target: await adapter.getAddress(),
+        pool: await pool.getAddress(),
+        tokenIn: await usdc.getAddress(),
+        lpToken: await pool.getAddress(),
+        amountIn: 160_000n * ONE_USDC
+      });
+      await vault.connect(executor).enterPool(enterRequest);
+      expect(await vault.hasOpenLpPosition()).to.equal(true);
+
+      await usdc.connect(depositor).approve(await vault.getAddress(), ONE_USDC);
+      await expect(vault.connect(depositor).depositUsdc(ONE_USDC))
+        .to.be.revertedWithCustomError(vault, "PositionStillActive");
+      await expect(vault.connect(depositor).withdrawToWallet(ONE_USDC, depositor.address))
+        .to.be.revertedWithCustomError(vault, "PositionStillActive");
+    });
+
+    it("rejects first user deposit when vault already has unaccounted USDC", async function () {
+      const { owner, depositor, usdc, vault } = await loadFixture(userFlowFixture);
+      await usdc.mint(await vault.getAddress(), 10_000n * ONE_USDC);
+      await usdc.connect(depositor).approve(await vault.getAddress(), ONE_USDC);
+      await expect(vault.connect(depositor).depositUsdc(ONE_USDC))
+        .to.be.revertedWithCustomError(vault, "VaultHasUnaccountedAssets")
+        .withArgs(10_000n * ONE_USDC);
+
+      // OWNER can still move pre-existing funds using executor flow if needed.
+      expect(await vault.hasRole(ethers.id("OWNER_ROLE"), owner.address)).to.equal(true);
     });
   });
 });

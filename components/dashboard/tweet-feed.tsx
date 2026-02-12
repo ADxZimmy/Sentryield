@@ -61,7 +61,7 @@ function TweetCard({ tweet, isPreview = false }: { tweet: Tweet; isPreview?: boo
           )}
         </div>
       </div>
-      <p className="whitespace-pre-line text-sm text-foreground leading-relaxed">
+      <p className="whitespace-pre-line break-words break-all text-sm leading-relaxed text-foreground">
         {tweet.content}
       </p>
     </div>

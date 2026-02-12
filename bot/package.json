@@ -8,6 +8,7 @@
     "dev": "tsx src/index.ts",
     "dev:railway": "tsx src/railway.ts",
     "preflight": "tsx src/preflight.ts",
+    "migration:report": "tsx src/migration-report.ts",
     "reset-state": "tsx src/reset-state.ts",
     "live-broadcast-once": "tsx src/live-broadcast-once.ts",
     "start:railway": "node dist/railway.js",

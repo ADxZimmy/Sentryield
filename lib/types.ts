@@ -65,6 +65,19 @@ export interface Tweet {
   type: "DEPLOYED" | "ROTATED" | "ALERT";
 }
 
+export interface PoolOption {
+  id: string;
+  label: string;
+  pair: string;
+  protocol: string;
+}
+
+export interface LatestDecision {
+  action: "HOLD" | "ENTER" | "ROTATE" | "EXIT_TO_USDC";
+  reason: string;
+  timestamp: string;
+}
+
 export interface DashboardData {
   agentStatus: AgentStatus;
   currentPosition: Position;
@@ -81,5 +94,8 @@ export interface DashboardData {
   vaultAddress: string;
   usdcTokenAddress: string;
   usdcDecimals: number;
+  vaultUsdcBalance: number | null;
+  availablePools: PoolOption[];
+  latestDecision: LatestDecision | null;
   explorerTxBaseUrl: string;
 }

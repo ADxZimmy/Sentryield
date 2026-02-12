@@ -42,6 +42,10 @@ Both files intentionally contain identical address payload:
   - optional global rolling 24h movement budget:
     - `dailyMovementCapBps` (0 disables)
     - tracked via `dailyMovementWindowStart` and `dailyMovementBpsUsed`
+  - user wallet flow for USDC:
+    - `depositUsdc(uint256)` (share-accounted deposit)
+    - `withdrawToWallet(uint256,address)` (redeem USDC back to wallet)
+    - withdrawals are blocked while LP positions are open; first deposit requires empty vault USDC
 - Tests updated and expanded:
   - rails: token/target/pool allowlist, pause, per-tx cap, daily cap, deadline, slippage, roles
   - call path: enter / exit / rotate
@@ -78,6 +82,18 @@ Both files intentionally contain identical address payload:
    - pool allowlist includes Curvance market
 6. Run fork rehearsal script before live bot execution.
 7. Start bot with training wheels first.
+
+### If OWNER is a multisig
+
+- `configure:vault:monad` requires a signer with `OWNER_ROLE` and is not suitable for multisig-only owners.
+- Generate multisig calldata plan instead:
+
+```bash
+cd onchain
+npm run prepare:configure:vault:multisig:monad
+```
+
+- Execute generated transactions in your Safe/multisig UI (same order), then re-run the command to confirm no remaining actions.
 
 ### Guarded live mode (recommended)
 
@@ -140,6 +156,14 @@ cd bot
 npm run dev
 ```
 
+### Migration report (old/new vault cutover)
+
+```bash
+cd bot
+# set MIGRATION_OLD_VAULT_ADDRESS + MIGRATION_NEW_VAULT_ADDRESS (+ optional state URLs)
+npm run migration:report
+```
+
 ## Mainnet checklist
 
 - Curvance config JSON matches current official addresses.
@@ -164,13 +188,22 @@ npm run dev
 4. From UI:
    - connect wallet (Injected / Coinbase / WalletConnect)
    - switch to Monad chain
-   - use **Deposit USDC To Vault** card to transfer USDC to `VAULT_ADDRESS`
+   - use **Deposit USDC To Vault** card
+   - if prompted, approve USDC then confirm deposit
+   - for wallet withdrawal: first trigger **Exit to USDC** in controls, wait until vault is parked, then use **Withdraw To Wallet**
 5. Optional clean-cycle reset (backs up old state first):
    - `cd bot && npm run reset-state`
 6. Re-run preflight and confirm `vault.usdc_balance` is non-zero.
 7. Run one controlled armed cycle (no permanent `.env` edits needed):
    - `cd bot && npm run live-broadcast-once`
 8. Verify real transaction hash on Monadscan and in dashboard history.
+
+## Vault upgrade note (withdraw UX)
+
+- The upgraded `TreasuryVault` constructor now includes a 6th argument: `depositToken` (USDC).
+- If you are on an older vault deployment, redeploy vault + update `VAULT_ADDRESS` before using wallet withdrawals.
+- Legacy vaults still support direct transfer deposits, but redeem-to-wallet is unavailable until upgrade.
+- Full blue/green migration guide: `docs/migration-playbook.md`.
 
 ## Vercel notes (important)
 

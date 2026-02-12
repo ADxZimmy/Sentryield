@@ -25,8 +25,14 @@ contract TreasuryVault is AccessControl, Pausable, ReentrancyGuard {
     uint16 public dailyMovementCapBps;
     uint32 public maxDeadlineDelay;
     address public executor;
+    address public immutable depositToken;
     uint256 public dailyMovementWindowStart;
     uint256 public dailyMovementBpsUsed;
+    uint256 public totalUserShares;
+
+    mapping(address => uint256) public userShares;
+    mapping(address => bool) private trackedLpTokens;
+    address[] private trackedLpTokenList;
 
     struct EnterRequest {
         address target;
@@ -106,6 +112,10 @@ contract TreasuryVault is AccessControl, Pausable, ReentrancyGuard {
 
     event Paused(address indexed by, uint256 timestamp);
     event Unpaused(address indexed by, uint256 timestamp);
+    event UserDeposited(address indexed user, uint256 amountIn, uint256 sharesOut, uint256 timestamp);
+    event UserWithdrawn(
+        address indexed user, address indexed receiver, uint256 amountOut, uint256 sharesBurned, uint256 timestamp
+    );
 
     error ZeroAddress();
     error InvalidBps(uint256 value);
@@ -124,20 +134,26 @@ contract TreasuryVault is AccessControl, Pausable, ReentrancyGuard {
     error SlippageCheckFailed(uint256 actualOut, uint256 minOut);
     error NotGuardianOrOwner();
     error NativeTokenNotAccepted();
+    error PositionStillActive();
+    error InsufficientShares(uint256 balance, uint256 requested);
+    error VaultHasUnaccountedAssets(uint256 currentBalance);
 
     constructor(
         address owner_,
         address executor_,
         address guardian_,
         uint16 movementCapBps_,
-        uint32 maxDeadlineDelay_
+        uint32 maxDeadlineDelay_,
+        address depositToken_
     ) {
         if (owner_ == address(0)) revert ZeroAddress();
+        if (depositToken_ == address(0)) revert ZeroAddress();
         if (movementCapBps_ == 0 || movementCapBps_ > BPS_DENOMINATOR) revert InvalidBps(movementCapBps_);
         if (maxDeadlineDelay_ == 0) revert InvalidDeadlineDelay(maxDeadlineDelay_);
 
         movementCapBps = movementCapBps_;
         maxDeadlineDelay = maxDeadlineDelay_;
+        depositToken = depositToken_;
 
         _grantRole(DEFAULT_ADMIN_ROLE, owner_);
         _grantRole(OWNER_ROLE, owner_);
@@ -232,6 +248,77 @@ contract TreasuryVault is AccessControl, Pausable, ReentrancyGuard {
         emit Unpaused(msg.sender, block.timestamp);
     }
 
+    function hasOpenLpPosition() public view returns (bool) {
+        for (uint256 i = 0; i < trackedLpTokenList.length; i++) {
+            if (IERC20(trackedLpTokenList[i]).balanceOf(address(this)) > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function maxWithdrawToWallet(address account) public view returns (uint256 assetsOut) {
+        uint256 shares = userShares[account];
+        if (shares == 0 || totalUserShares == 0) return 0;
+        uint256 idleBalance = IERC20(depositToken).balanceOf(address(this));
+        assetsOut = (shares * idleBalance) / totalUserShares;
+    }
+
+    function previewWithdrawToWallet(uint256 assetsOut) public view returns (uint256 sharesBurned) {
+        if (assetsOut == 0) return 0;
+        uint256 idleBalance = IERC20(depositToken).balanceOf(address(this));
+        uint256 totalShares = totalUserShares;
+        if (idleBalance == 0 || totalShares == 0) return 0;
+        sharesBurned = ((assetsOut * totalShares) + (idleBalance - 1)) / idleBalance;
+    }
+
+    function depositUsdc(uint256 amountIn) external whenNotPaused nonReentrant returns (uint256 sharesOut) {
+        if (amountIn == 0) revert InvalidAmount();
+        if (hasOpenLpPosition()) revert PositionStillActive();
+
+        _requireTokenAllowed(depositToken);
+        uint256 idleBalance = IERC20(depositToken).balanceOf(address(this));
+        if (totalUserShares == 0) {
+            if (idleBalance != 0) revert VaultHasUnaccountedAssets(idleBalance);
+            sharesOut = amountIn;
+        } else {
+            if (idleBalance == 0) revert InvalidAmount();
+            sharesOut = (amountIn * totalUserShares) / idleBalance;
+            if (sharesOut == 0) revert InvalidAmount();
+        }
+
+        IERC20(depositToken).safeTransferFrom(msg.sender, address(this), amountIn);
+        userShares[msg.sender] += sharesOut;
+        totalUserShares += sharesOut;
+
+        emit UserDeposited(msg.sender, amountIn, sharesOut, block.timestamp);
+    }
+
+    function withdrawToWallet(uint256 amountOut, address receiver)
+        external
+        whenNotPaused
+        nonReentrant
+        returns (uint256 sharesBurned)
+    {
+        if (amountOut == 0) revert InvalidAmount();
+        if (receiver == address(0)) revert ZeroAddress();
+        if (hasOpenLpPosition()) revert PositionStillActive();
+
+        sharesBurned = previewWithdrawToWallet(amountOut);
+        if (sharesBurned == 0) revert InvalidAmount();
+
+        uint256 currentShares = userShares[msg.sender];
+        if (sharesBurned > currentShares) {
+            revert InsufficientShares(currentShares, sharesBurned);
+        }
+
+        userShares[msg.sender] = currentShares - sharesBurned;
+        totalUserShares -= sharesBurned;
+        IERC20(depositToken).safeTransfer(receiver, amountOut);
+
+        emit UserWithdrawn(msg.sender, receiver, amountOut, sharesBurned, block.timestamp);
+    }
+
     function enterPool(EnterRequest calldata request)
         external
         onlyRole(EXECUTOR_ROLE)
@@ -301,6 +388,7 @@ contract TreasuryVault is AccessControl, Pausable, ReentrancyGuard {
         _validateDeadline(request.deadline);
         _enforceMovementCaps(request.tokenIn, request.amountIn);
 
+        _trackLpToken(request.lpToken);
         IERC20(request.tokenIn).forceApprove(request.target, request.amountIn);
 
         lpReceived = ITargetAdapter(request.target).enter(
@@ -400,5 +488,11 @@ contract TreasuryVault is AccessControl, Pausable, ReentrancyGuard {
         }
 
         dailyMovementBpsUsed = nextUsed;
+    }
+
+    function _trackLpToken(address lpToken) internal {
+        if (trackedLpTokens[lpToken]) return;
+        trackedLpTokens[lpToken] = true;
+        trackedLpTokenList.push(lpToken);
     }
 }

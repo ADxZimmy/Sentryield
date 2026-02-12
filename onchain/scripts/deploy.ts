@@ -16,6 +16,8 @@ interface CurvanceMainnetConfig {
   };
 }
 
+const OWNER_ROLE = ethers.id("OWNER_ROLE");
+
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
@@ -56,12 +58,29 @@ async function main(): Promise<void> {
     executor,
     guardian,
     movementCapBps,
-    maxDeadlineDelay
+    maxDeadlineDelay,
+    curvanceConfig.tokens.USDC
   );
   await vault.waitForDeployment();
 
   const vaultAddress = await vault.getAddress();
   console.log(`TreasuryVault deployed at: ${vaultAddress}`);
+
+  const [deployerSigner] = await ethers.getSigners();
+  const deployerAddress = await deployerSigner.getAddress();
+  const deployerHasOwnerRole = await vault.hasRole(OWNER_ROLE, deployerAddress);
+  if (!deployerHasOwnerRole) {
+    console.warn(
+      [
+        "Deployer does not have OWNER_ROLE on the new vault.",
+        `deployer=${deployerAddress}`,
+        `owner=${owner}`,
+        "Skipping allowlist bootstrap to avoid revert.",
+        "Next step: set VAULT_ADDRESS to this new vault and run `npm run configure:vault:monad` with OWNER_PRIVATE_KEY."
+      ].join(" ")
+    );
+    return;
+  }
 
   const tokenAllowlist = unique([
     curvanceConfig.tokens.USDC,

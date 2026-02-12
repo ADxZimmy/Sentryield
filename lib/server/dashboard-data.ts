@@ -3,12 +3,15 @@ import "server-only";
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createPublicClient, erc20Abi, formatUnits, http, isAddress } from "viem";
 import type {
   AgentStatus,
   DashboardData,
   GuardStatus,
   GuardStatusLevel,
+  LatestDecision,
   Position,
+  PoolOption,
   Rotation,
   Snapshot,
   Tweet
@@ -82,6 +85,7 @@ const DEFAULT_DEPEG_THRESHOLD_PCT = 1;
 const DEFAULT_SLIPPAGE_THRESHOLD_PCT = 0.3;
 const DEFAULT_APR_CLIFF_THRESHOLD_PCT = 50;
 const DEFAULT_USDC_DECIMALS = 6;
+const DEFAULT_RPC_URL = "https://rpc.monad.xyz";
 
 interface ChainConfig {
   chainId: number;
@@ -120,11 +124,20 @@ export async function getDashboardData(): Promise<DashboardData> {
   const vaultAddress = envString("VAULT_ADDRESS", ZERO_ADDRESS);
   const usdcTokenAddress = envString("USDC_TOKEN_ADDRESS", CHAIN_CONFIG.tokens.USDC);
   const usdcDecimals = Math.max(0, Math.floor(envNumber("USDC_DECIMALS", DEFAULT_USDC_DECIMALS)));
+  const rpcUrl = envString("MONAD_RPC_URL", DEFAULT_RPC_URL);
   const explorerTxBaseUrl = envString(
     "EXPLORER_TX_BASE_URL",
     DEFAULT_EXPLORER_TX_BASE_URL
   );
   const rotations = mapRotations(state, poolMetaById, snapshotsByPool, isDryRun);
+  const availablePools = mapAvailablePools(poolMetaById);
+  const latestDecisionRow = mapLatestDecision(latestDecision);
+  const vaultUsdcBalance = await readVaultUsdcBalance({
+    rpcUrl,
+    vaultAddress,
+    usdcTokenAddress,
+    usdcDecimals
+  });
   const tweets = mapTweets(state.tweets, isDryRun);
   const nextTweetPreview = buildPreviewTweet(currentPosition, guardStatus, agentStatus);
 
@@ -144,6 +157,9 @@ export async function getDashboardData(): Promise<DashboardData> {
     vaultAddress,
     usdcTokenAddress,
     usdcDecimals,
+    vaultUsdcBalance,
+    availablePools,
+    latestDecision: latestDecisionRow,
     explorerTxBaseUrl
   };
 }
@@ -527,6 +543,28 @@ function mapTweets(tweets: BotTweet[], isDryRun: boolean): Tweet[] {
     }));
 }
 
+function mapAvailablePools(
+  poolMetaById: Map<string, { pair: string; protocol: string }>
+): PoolOption[] {
+  return [...poolMetaById.entries()]
+    .map(([id, meta]) => ({
+      id,
+      label: `${meta.protocol} ${meta.pair}`,
+      pair: meta.pair,
+      protocol: meta.protocol
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function mapLatestDecision(decision: BotDecision | undefined): LatestDecision | null {
+  if (!decision) return null;
+  return {
+    action: decision.action,
+    reason: decision.reason,
+    timestamp: toIsoString(decision.timestamp)
+  };
+}
+
 function buildPreviewTweet(
   currentPosition: Position,
   guardStatus: GuardStatus,
@@ -814,6 +852,32 @@ function loadChainConfig(): ChainConfig {
         USDC: "0x754704Bc059F8C67012fEd69BC8A327a5aafb603"
       }
     };
+  }
+}
+
+async function readVaultUsdcBalance(input: {
+  rpcUrl: string;
+  vaultAddress: string;
+  usdcTokenAddress: string;
+  usdcDecimals: number;
+}): Promise<number | null> {
+  if (!isAddress(input.vaultAddress) || !isAddress(input.usdcTokenAddress)) {
+    return null;
+  }
+  try {
+    const client = createPublicClient({
+      transport: http(input.rpcUrl)
+    });
+    const raw = await client.readContract({
+      address: input.usdcTokenAddress,
+      abi: erc20Abi,
+      functionName: "balanceOf",
+      args: [input.vaultAddress]
+    });
+    const parsed = Number(formatUnits(raw, input.usdcDecimals));
+    return Number.isFinite(parsed) ? parsed : null;
+  } catch {
+    return null;
   }
 }
 

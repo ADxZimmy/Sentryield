@@ -3,7 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { Header } from "@/components/dashboard/header";
 import { CurrentPositionCard } from "@/components/dashboard/current-position-card";
+import { AgentActivityCard } from "@/components/dashboard/agent-activity-card";
 import { DepositUsdcCard } from "@/components/dashboard/deposit-usdc-card";
+import { AgentControlsCard } from "@/components/dashboard/agent-controls-card";
+import { AgentHowItWorksCard } from "@/components/dashboard/agent-how-it-works-card";
 import { RiskGuardsCard } from "@/components/dashboard/risk-guards-card";
 import { ApyChart } from "@/components/dashboard/apy-chart";
 import { RotationsTable } from "@/components/dashboard/rotations-table";
@@ -116,6 +119,10 @@ export function DashboardLive({
         <div className="grid gap-6 lg:grid-cols-12">
           <div className="space-y-6 lg:col-span-4">
             <CurrentPositionCard position={data.currentPosition} />
+            <AgentActivityCard
+              vaultUsdcBalance={data.vaultUsdcBalance}
+              latestDecision={data.latestDecision}
+            />
             <DepositUsdcCard
               chainId={data.chainId}
               vaultAddress={data.vaultAddress}
@@ -123,7 +130,12 @@ export function DashboardLive({
               usdcDecimals={data.usdcDecimals}
               explorerTxBaseUrl={data.explorerTxBaseUrl}
             />
+            <AgentControlsCard
+              availablePools={data.availablePools}
+              currentPosition={data.currentPosition}
+            />
             <RiskGuardsCard guardStatus={data.guardStatus} />
+            <AgentHowItWorksCard />
           </div>
 
           <div className="space-y-6 lg:col-span-8">

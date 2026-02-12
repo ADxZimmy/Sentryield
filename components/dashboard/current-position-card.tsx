@@ -1,8 +1,7 @@
 "use client";
 
-import { Pause, LogOut, RefreshCw, Clock, ArrowRightLeft } from "lucide-react";
+import { Clock, ArrowRightLeft } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { Position } from "@/lib/types";
 
@@ -98,38 +97,6 @@ export function CurrentPositionCard({ position }: CurrentPositionCardProps) {
           </p>
         </div>
 
-        <div className="flex gap-2 pt-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="flex-1 gap-1 bg-transparent"
-            disabled
-          >
-            <Pause className="h-3.5 w-3.5" />
-            Pause
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="flex-1 gap-1 bg-transparent"
-            disabled
-          >
-            <LogOut className="h-3.5 w-3.5" />
-            Exit
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="flex-1 gap-1 bg-transparent"
-            disabled
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-            Rotate
-          </Button>
-        </div>
-        <p className="text-center text-xs text-muted-foreground">
-          Controls disabled in v1 (read-only)
-        </p>
       </CardContent>
     </Card>
   );

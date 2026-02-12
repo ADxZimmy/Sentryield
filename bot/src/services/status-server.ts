@@ -26,6 +26,22 @@ interface BotStatusServerConfig {
   stateProvider: () => Promise<DbState>;
 }
 
+export type OperatorActionType = "EXIT_TO_USDC" | "ROTATE";
+
+export interface OperatorAction {
+  type: OperatorActionType;
+  requestedAt: string;
+  requestedBy: string;
+  poolId?: string;
+}
+
+export interface OperatorState {
+  paused: boolean;
+  pendingAction: OperatorAction | null;
+  lastAppliedAction: OperatorAction | null;
+  updatedAt: string;
+}
+
 interface HealthEvaluation {
   healthy: boolean;
   ready: boolean;
@@ -34,6 +50,12 @@ interface HealthEvaluation {
 
 export class BotStatusServer {
   private readonly server: Server;
+  private operatorState: OperatorState = {
+    paused: false,
+    pendingAction: null,
+    lastAppliedAction: null,
+    updatedAt: new Date().toISOString()
+  };
 
   constructor(private readonly config: BotStatusServerConfig) {
     this.server = createServer(async (req, res) => {
@@ -63,9 +85,51 @@ export class BotStatusServer {
     });
   }
 
+  isPaused(): boolean {
+    return this.operatorState.paused;
+  }
+
+  getOperatorState(): OperatorState {
+    return {
+      ...this.operatorState
+    };
+  }
+
+  setPaused(paused: boolean, requestedBy = "api"): OperatorState {
+    void requestedBy;
+    this.operatorState = {
+      ...this.operatorState,
+      paused,
+      updatedAt: new Date().toISOString()
+    };
+    return this.getOperatorState();
+  }
+
+  queueAction(action: OperatorAction): OperatorState {
+    this.operatorState = {
+      ...this.operatorState,
+      pendingAction: action,
+      updatedAt: new Date().toISOString()
+    };
+    return this.getOperatorState();
+  }
+
+  consumePendingAction(): OperatorAction | null {
+    const next = this.operatorState.pendingAction;
+    if (!next) return null;
+    this.operatorState = {
+      ...this.operatorState,
+      pendingAction: null,
+      lastAppliedAction: next,
+      updatedAt: new Date().toISOString()
+    };
+    return next;
+  }
+
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? "/", "http://localhost");
-    const requiresAuth = url.pathname === "/state";
+    const requiresAuth =
+      url.pathname === "/state" || url.pathname.startsWith("/controls");
     if (requiresAuth && !this.isAuthorized(req, url)) {
       this.respond(res, 401, { error: "Unauthorized" });
       return;
@@ -104,14 +168,68 @@ export class BotStatusServer {
         ready: health.ready,
         reason: health.reason,
         runtime: status,
+        controls: this.operatorState,
         state
       });
       return;
     }
 
+    if (url.pathname === "/controls" && req.method === "GET") {
+      this.respond(res, 200, this.getOperatorState());
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/controls/pause") {
+      this.setPaused(true, this.requesterName(req));
+      this.respond(res, 200, this.getOperatorState());
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/controls/resume") {
+      this.setPaused(false, this.requesterName(req));
+      this.respond(res, 200, this.getOperatorState());
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/controls/exit") {
+      this.queueAction({
+        type: "EXIT_TO_USDC",
+        requestedAt: new Date().toISOString(),
+        requestedBy: this.requesterName(req)
+      });
+      this.respond(res, 200, this.getOperatorState());
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/controls/rotate") {
+      const body = await this.readJson(req);
+      const poolId = typeof body.poolId === "string" ? body.poolId.trim() : "";
+      if (!poolId) {
+        this.respond(res, 400, { error: "poolId is required for rotate command." });
+        return;
+      }
+      this.queueAction({
+        type: "ROTATE",
+        poolId,
+        requestedAt: new Date().toISOString(),
+        requestedBy: this.requesterName(req)
+      });
+      this.respond(res, 200, this.getOperatorState());
+      return;
+    }
+
     this.respond(res, 200, {
       service: status.service,
-      routes: ["/healthz", "/readyz", "/state"]
+      routes: [
+        "/healthz",
+        "/readyz",
+        "/state",
+        "/controls",
+        "/controls/pause",
+        "/controls/resume",
+        "/controls/exit",
+        "/controls/rotate"
+      ]
     });
   }
 
@@ -130,6 +248,27 @@ export class BotStatusServer {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.setHeader("Cache-Control", "no-store, max-age=0");
     res.end(JSON.stringify(payload));
+  }
+
+  private requesterName(req: IncomingMessage): string {
+    const forwardedFor = req.headers["x-forwarded-for"];
+    if (typeof forwardedFor === "string" && forwardedFor.trim()) return forwardedFor.trim();
+    return req.socket.remoteAddress ?? "unknown";
+  }
+
+  private async readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve, reject) => {
+      req.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      req.on("end", () => resolve());
+      req.on("error", reject);
+    });
+    if (!chunks.length) return {};
+    try {
+      return JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
   }
 }
 

@@ -39,7 +39,8 @@ async function main(): Promise<void> {
     executor.address,
     ethers.ZeroAddress,
     8_000,
-    1_800
+    1_800,
+    chainConfig.tokens.USDC
   );
   await Promise.all([adapter.waitForDeployment(), vault.waitForDeployment()]);
 

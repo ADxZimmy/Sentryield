@@ -25,11 +25,22 @@ import {
 import { DecisionService } from "./services/decision.js";
 import { ExecutorService } from "./services/executor.js";
 import { ScannerService } from "./services/scanner.js";
-import { BotStatusServer, type BotRuntimeStatus } from "./services/status-server.js";
+import {
+  BotStatusServer,
+  type BotRuntimeStatus,
+  type OperatorAction
+} from "./services/status-server.js";
 import { ConsoleXClient, TweeterService } from "./services/tweeter.js";
 import { LivePriceOracle } from "./services/apy.js";
 import { JsonDb } from "./storage/db.js";
-import type { ExecutionResult, TweetRecord } from "./types.js";
+import {
+  DecisionReasonCode,
+  type Decision,
+  type ExecutionResult,
+  type PoolSnapshot,
+  type Position,
+  type TweetRecord
+} from "./types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DB_PATH = join(__dirname, "..", "data", "state.json");
@@ -201,12 +212,21 @@ async function main(): Promise<void> {
       await db.addSnapshots(snapshots);
 
       const stablePricesUsd = await oracle.getStablePricesUsd();
-      const decision = await decisionService.decide({
+      const autoDecision = await decisionService.decide({
         nowTs,
         position: stateBefore.position,
         snapshots,
         previousSnapshots: stateBefore.snapshots,
         stablePricesUsd
+      });
+      const manualAction = startedStatusServer?.consumePendingAction() ?? null;
+      const decision = applyOperatorOverrides({
+        nowTs,
+        defaultDecision: autoDecision,
+        manualAction,
+        paused: startedStatusServer?.isPaused() ?? false,
+        position: stateBefore.position,
+        snapshots
       });
       await db.addDecision(decision);
 
@@ -279,6 +299,162 @@ async function main(): Promise<void> {
   setInterval(() => {
     void tick();
   }, intervalMs);
+}
+
+function applyOperatorOverrides(input: {
+  nowTs: number;
+  defaultDecision: Decision;
+  manualAction: OperatorAction | null;
+  paused: boolean;
+  position: Position | null;
+  snapshots: PoolSnapshot[];
+}): Decision {
+  if (input.manualAction) {
+    const manualDecision = buildManualDecision(
+      input.nowTs,
+      input.manualAction,
+      input.position,
+      input.snapshots
+    );
+    if (manualDecision) {
+      return manualDecision;
+    }
+  }
+
+  if (input.paused) {
+    return {
+      timestamp: input.nowTs,
+      action: "HOLD",
+      reason: "Operator paused automated rotations.",
+      reasonCode: DecisionReasonCode.OPERATOR_PAUSED,
+      chosenPoolId: null,
+      fromPoolId: input.position?.poolId ?? null,
+      emergency: false,
+      oldNetApyBps: input.position?.lastNetApyBps ?? 0,
+      newNetApyBps: 0,
+      estimatedPaybackHours: null
+    };
+  }
+
+  return input.defaultDecision;
+}
+
+function buildManualDecision(
+  nowTs: number,
+  manualAction: OperatorAction,
+  position: Position | null,
+  snapshots: PoolSnapshot[]
+): Decision | null {
+  const snapshotByPool = new Map(snapshots.map((snapshot) => [snapshot.poolId, snapshot]));
+  const currentPoolId = position?.poolId ?? null;
+
+  if (manualAction.type === "EXIT_TO_USDC") {
+    if (!currentPoolId) {
+      return {
+        timestamp: nowTs,
+        action: "HOLD",
+        reason: "Manual exit requested but no active position.",
+        reasonCode: DecisionReasonCode.NO_ELIGIBLE_POOL,
+        chosenPoolId: null,
+        fromPoolId: null,
+        emergency: false,
+        oldNetApyBps: 0,
+        newNetApyBps: 0,
+        estimatedPaybackHours: null
+      };
+    }
+    return {
+      timestamp: nowTs,
+      action: "EXIT_TO_USDC",
+      reason: "Manual operator exit to USDC.",
+      reasonCode: DecisionReasonCode.OPERATOR_MANUAL_EXIT,
+      chosenPoolId: null,
+      fromPoolId: currentPoolId,
+      emergency: false,
+      oldNetApyBps: position?.lastNetApyBps ?? 0,
+      newNetApyBps: 0,
+      estimatedPaybackHours: null
+    };
+  }
+
+  if (manualAction.type !== "ROTATE") {
+    return null;
+  }
+  const targetPoolId = manualAction.poolId?.trim();
+  if (!targetPoolId) {
+    return {
+      timestamp: nowTs,
+      action: "HOLD",
+      reason: "Manual rotate requested without a target pool.",
+      reasonCode: DecisionReasonCode.NO_ELIGIBLE_POOL,
+      chosenPoolId: null,
+      fromPoolId: currentPoolId,
+      emergency: false,
+      oldNetApyBps: position?.lastNetApyBps ?? 0,
+      newNetApyBps: 0,
+      estimatedPaybackHours: null
+    };
+  }
+
+  const targetSnapshot = snapshotByPool.get(targetPoolId);
+  if (!targetSnapshot) {
+    return {
+      timestamp: nowTs,
+      action: "HOLD",
+      reason: `Manual rotate target pool is unavailable: ${targetPoolId}`,
+      reasonCode: DecisionReasonCode.NO_ELIGIBLE_POOL,
+      chosenPoolId: null,
+      fromPoolId: currentPoolId,
+      emergency: false,
+      oldNetApyBps: position?.lastNetApyBps ?? 0,
+      newNetApyBps: 0,
+      estimatedPaybackHours: null
+    };
+  }
+
+  if (!currentPoolId) {
+    return {
+      timestamp: nowTs,
+      action: "ENTER",
+      reason: `Manual operator enter into ${targetPoolId}.`,
+      reasonCode: DecisionReasonCode.OPERATOR_MANUAL_ENTER,
+      chosenPoolId: targetPoolId,
+      fromPoolId: null,
+      emergency: false,
+      oldNetApyBps: 0,
+      newNetApyBps: targetSnapshot.netApyBps,
+      estimatedPaybackHours: null
+    };
+  }
+
+  if (currentPoolId === targetPoolId) {
+    return {
+      timestamp: nowTs,
+      action: "HOLD",
+      reason: "Manual rotate target is the current pool; no-op.",
+      reasonCode: DecisionReasonCode.NO_ELIGIBLE_POOL,
+      chosenPoolId: null,
+      fromPoolId: currentPoolId,
+      emergency: false,
+      oldNetApyBps: position?.lastNetApyBps ?? 0,
+      newNetApyBps: targetSnapshot.netApyBps,
+      estimatedPaybackHours: null
+    };
+  }
+
+  const currentSnapshot = snapshotByPool.get(currentPoolId);
+  return {
+    timestamp: nowTs,
+    action: "ROTATE",
+    reason: `Manual operator rotate to ${targetPoolId}.`,
+    reasonCode: DecisionReasonCode.OPERATOR_MANUAL_ROTATE,
+    chosenPoolId: targetPoolId,
+    fromPoolId: currentPoolId,
+    emergency: false,
+    oldNetApyBps: currentSnapshot?.netApyBps ?? position?.lastNetApyBps ?? 0,
+    newNetApyBps: targetSnapshot.netApyBps,
+    estimatedPaybackHours: null
+  };
 }
 
 async function maybeTweet(

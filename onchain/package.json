@@ -8,6 +8,7 @@
     "deploy:adapter:monad": "hardhat run scripts/deploy-adapter.ts --network monad",
     "deploy:monad": "hardhat run scripts/deploy.ts --network monad",
     "configure:vault:monad": "hardhat run scripts/configure-vault.ts --network monad",
+    "prepare:configure:vault:multisig:monad": "hardhat run scripts/prepare-configure-vault-multisig.ts --network monad",
     "rehearsal:fork": "hardhat run scripts/rehearsal-fork.ts --network hardhat"
   },
   "devDependencies": {
