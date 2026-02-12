@@ -59,6 +59,23 @@ function envBool(name: string, fallback: boolean): boolean {
   return raw.toLowerCase() === "true";
 }
 
+function envString(name: string, fallback: string): string {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const trimmed = raw.trim();
+  return trimmed || fallback;
+}
+
+function envCsvUpper(name: string, fallback: string[]): string[] {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const values = raw
+    .split(",")
+    .map((item) => item.trim().toUpperCase())
+    .filter(Boolean);
+  return values.length ? values : fallback;
+}
+
 export const TOKENS: TokenConfig = {
   USDC: CHAIN_CONFIG.tokens.USDC,
   MON: CHAIN_CONFIG.tokens.MON,
@@ -89,13 +106,9 @@ export const POOLS: PoolConfig[] = [
     lpToken: CHAIN_CONFIG.curvance.receiptToken,
     baseApyBps: envNumber("BASE_APY_BPS_CURVANCE_USDC", 420),
     rewardTokenSymbol: "USDC",
-    mock: {
-      tvlUsd: envNumber("MOCK_TVL_USD_CURVANCE_USDC", 12_000_000),
-      rewardRatePerSecond: envNumber("MOCK_REWARD_RATE_CURVANCE_USDC", 0),
-      priceImpactBps: envNumber("MOCK_PRICE_IMPACT_BPS_CURVANCE_USDC", 5),
-      rotationCostBps: envNumber("MOCK_ROTATION_COST_BPS_CURVANCE_USDC", 12),
-      protocolFeeBps: envNumber("MOCK_PROTOCOL_FEE_BPS_CURVANCE_USDC", 8)
-    }
+    rewardRatePerSecond: envNumber("CURVANCE_REWARD_RATE_PER_SECOND", 0),
+    protocolFeeBps: envNumber("CURVANCE_PROTOCOL_FEE_BPS", 8),
+    rotationCostBps: envNumber("CURVANCE_ROTATION_COST_BPS", 12)
   }
 ];
 
@@ -129,11 +142,29 @@ if (!RUNTIME.dryRun && !RUNTIME.liveModeArmed) {
   );
 }
 
-export const STATIC_PRICES_USD: Record<string, number> = {
-  AUSD: envNumber("PRICE_AUSD_USD", 1),
-  USDC: envNumber("PRICE_USDC_USD", 1),
-  MON: envNumber("PRICE_MON_USD", 1.45)
+export const STABLE_PRICE_SYMBOLS = envCsvUpper("STABLE_PRICE_SYMBOLS", ["USDC"]);
+export const COINGECKO_API_BASE_URL = envString(
+  "COINGECKO_API_BASE_URL",
+  "https://api.coingecko.com/api/v3"
+);
+export const PRICE_ORACLE_TIMEOUT_MS = envNumber("PRICE_ORACLE_TIMEOUT_MS", 8_000);
+export const PRICE_ORACLE_CACHE_TTL_MS = envNumber("PRICE_ORACLE_CACHE_TTL_MS", 30_000);
+export const COINGECKO_ID_BY_SYMBOL: Record<string, string> = {
+  USDC: envString("COINGECKO_ID_USDC", "usd-coin"),
+  MON: envString("COINGECKO_ID_MON", "monad"),
+  AUSD: envString("COINGECKO_ID_AUSD", "")
 };
+
+if (!RUNTIME.dryRun) {
+  for (const symbol of STABLE_PRICE_SYMBOLS) {
+    const id = COINGECKO_ID_BY_SYMBOL[symbol];
+    if (!id) {
+      throw new Error(
+        `Missing COINGECKO_ID_${symbol} while STABLE_PRICE_SYMBOLS includes ${symbol}.`
+      );
+    }
+  }
+}
 
 export const POOL_BY_ID = new Map(POOLS.map((pool) => [pool.id, pool]));
 export const CURVANCE_MAINNET = CHAIN_CONFIG;

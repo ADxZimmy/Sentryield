@@ -7,8 +7,8 @@ export interface XClient {
 export class ConsoleXClient implements XClient {
   async postTweet(text: string): Promise<string> {
     // TODO: Replace with official X API client (v2) and auth flow.
-    console.log("[X placeholder]", text);
-    return `mock-${Date.now()}`;
+    console.log("[X console]", text);
+    return `console-${Date.now()}`;
   }
 }
 

@@ -5,17 +5,30 @@ function deviationBpsFromDollar(price: number): number {
 }
 
 export function depegGuard(
-  stablePricesUsd: { AUSD: number; USDC: number },
+  stablePricesUsd: Record<string, number>,
   maxDeviationBps: number
 ): GuardResult {
-  const ausdDeviation = deviationBpsFromDollar(stablePricesUsd.AUSD);
-  const usdcDeviation = deviationBpsFromDollar(stablePricesUsd.USDC);
-
-  if (ausdDeviation > maxDeviationBps || usdcDeviation > maxDeviationBps) {
+  const entries = Object.entries(stablePricesUsd);
+  if (!entries.length) {
     return {
       triggered: true,
       reason: "DEPEG_GUARD_TRIGGERED",
-      details: `AUSD deviation=${ausdDeviation}bps, USDC deviation=${usdcDeviation}bps`
+      details: "No stable prices available."
+    };
+  }
+
+  const deviations = entries.map(([symbol, price]) => ({
+    symbol,
+    bps: deviationBpsFromDollar(price)
+  }));
+  const triggered = deviations.some((item) => item.bps > maxDeviationBps);
+  if (triggered) {
+    return {
+      triggered: true,
+      reason: "DEPEG_GUARD_TRIGGERED",
+      details: deviations
+        .map((item) => `${item.symbol} deviation=${item.bps}bps`)
+        .join(", ")
     };
   }
 

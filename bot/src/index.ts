@@ -10,13 +10,24 @@ import {
 } from "viem";
 import type { StrategyAdapter } from "./adapters/adapter.interface.js";
 import { CurvanceAdapter } from "./adapters/curvance.adapter.js";
-import { POOL_BY_ID, POOLS, POLICY, RUNTIME, STATIC_PRICES_USD, TOKENS } from "./config.js";
+import {
+  COINGECKO_API_BASE_URL,
+  COINGECKO_ID_BY_SYMBOL,
+  POOL_BY_ID,
+  POOLS,
+  POLICY,
+  PRICE_ORACLE_CACHE_TTL_MS,
+  PRICE_ORACLE_TIMEOUT_MS,
+  RUNTIME,
+  STABLE_PRICE_SYMBOLS,
+  TOKENS
+} from "./config.js";
 import { DecisionService } from "./services/decision.js";
 import { ExecutorService } from "./services/executor.js";
 import { ScannerService } from "./services/scanner.js";
 import { BotStatusServer, type BotRuntimeStatus } from "./services/status-server.js";
 import { ConsoleXClient, TweeterService } from "./services/tweeter.js";
-import { StaticPriceOracle } from "./services/apy.js";
+import { LivePriceOracle } from "./services/apy.js";
 import { JsonDb } from "./storage/db.js";
 import type { ExecutionResult, TweetRecord } from "./types.js";
 
@@ -69,7 +80,13 @@ async function main(): Promise<void> {
   const adapters = new Map<string, StrategyAdapter>([
     ["curvance", new CurvanceAdapter(publicClient)]
   ]);
-  const oracle = new StaticPriceOracle(STATIC_PRICES_USD);
+  const oracle = new LivePriceOracle({
+    baseUrl: COINGECKO_API_BASE_URL,
+    stableSymbols: STABLE_PRICE_SYMBOLS,
+    coingeckoIdBySymbol: COINGECKO_ID_BY_SYMBOL,
+    timeoutMs: PRICE_ORACLE_TIMEOUT_MS,
+    cacheTtlMs: PRICE_ORACLE_CACHE_TTL_MS
+  });
 
   const scanner = new ScannerService(
     POOLS,

@@ -1,0 +1,11 @@
+[phases.setup]
+nixPkgs = ["nodejs_22"]
+
+[phases.install]
+cmds = ["cd bot && npm ci"]
+
+[phases.build]
+cmds = ["cd bot && npm run build"]
+
+[start]
+cmd = "cd bot && npm run start:railway"

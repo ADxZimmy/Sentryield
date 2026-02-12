@@ -61,6 +61,10 @@ Both files intentionally contain identical address payload:
   - `ENTER_ONLY=true` blocks rotations (emergency exits still allowed)
   - `MAX_ROTATIONS_PER_DAY`
   - `COOLDOWN_SECONDS` between rotations (unless emergency)
+- Live data hardening:
+  - no `pool.mock` fallbacks in runtime paths
+  - scanner/adapters fail closed if onchain reads or quotes fail
+  - price inputs come from live CoinGecko fetches (`STABLE_PRICE_SYMBOLS`, `COINGECKO_ID_*`)
 
 ## Go-live steps
 
@@ -192,18 +196,24 @@ npm run dev
 
 Deploy the bot as a separate Railway service (Vercel should host UI only).
 
-1. Create a new Railway service from this repo and set **Root Directory** to `bot`.
-2. Keep `bot/railway.json` in place (Railway reads build/start/health settings from it).
-3. Configure bot env vars on Railway:
+1. Create a new Railway service from this repo.
+2. Preferred setup:
+   - keep service at repo root (default)
+   - use root `railway.json` + `nixpacks.toml` (already configured to build/run `bot/`)
+   - this avoids root `pnpm-lock.yaml` install issues by forcing `cd bot && npm ci`
+3. Alternative setup:
+   - set **Root Directory** to `bot` and use `bot/railway.json`
+   - if Railway still selects pnpm, clear the builder cache and redeploy
+4. Configure bot env vars on Railway:
    - required runtime: `MONAD_RPC_URL`, `MONAD_CHAIN_ID`, `VAULT_ADDRESS`, `CURVANCE_TARGET_ADAPTER_ADDRESS`, `BOT_EXECUTOR_PRIVATE_KEY`
    - mode flags: `DRY_RUN=false`, `LIVE_MODE_ARMED=<true|false>`
    - controls: `SCAN_INTERVAL_SECONDS`, `DEFAULT_TRADE_AMOUNT_RAW`, `TX_DEADLINE_SECONDS`
    - status endpoints: `BOT_STATUS_SERVER_ENABLED=true`, `BOT_STATUS_SERVER_REQUIRED=true`, optional `BOT_STATUS_AUTH_TOKEN=<secret>`
-4. Deploy and verify:
+5. Deploy and verify:
    - `https://<railway-domain>/healthz` => 200
    - `https://<railway-domain>/readyz` => 200 (after first successful tick)
    - `https://<railway-domain>/state` => includes `{ healthy: true, ready: true, runtime, state }`
-5. Point Vercel UI to Railway bot:
+6. Point Vercel UI to Railway bot:
    - `BOT_STATE_URL=https://<railway-domain>/state`
    - if protected: `BOT_STATE_AUTH_TOKEN=<same secret>`
-6. Redeploy Vercel so dashboard uses live Railway bot state.
+7. Redeploy Vercel so dashboard uses live Railway bot state.

@@ -14,20 +14,14 @@ export class Dex1Adapter implements StrategyAdapter {
   readonly id = "dex1";
 
   async fetchPoolState(pool: PoolConfig): Promise<PoolOnChainState> {
-    // TODO: Replace placeholders with actual readContract calls against DEX1 pool/reward contracts.
-    return {
-      tvlUsd: pool.mock.tvlUsd,
-      rewardRatePerSecond: pool.mock.rewardRatePerSecond,
-      rewardTokenSymbol: pool.rewardTokenSymbol,
-      baseApyBps: pool.baseApyBps,
-      protocolFeeBps: pool.mock.protocolFeeBps
-    };
+    void pool;
+    throw new Error("Dex1Adapter is disabled in live runtime.");
   }
 
   async estimatePriceImpactBps(pool: PoolConfig, amountIn: bigint): Promise<number> {
+    void pool;
     void amountIn;
-    // TODO: Replace with router quote simulation for real trade size.
-    return pool.mock.priceImpactBps;
+    throw new Error("Dex1Adapter is disabled in live runtime.");
   }
 
   async estimateRotationCostBps(
@@ -35,13 +29,14 @@ export class Dex1Adapter implements StrategyAdapter {
     toPool: PoolConfig,
     amountIn: bigint
   ): Promise<number> {
+    void fromPool;
+    void toPool;
     void amountIn;
-    // TODO: Replace with aggregate exit+enter quote based on actual LP and route depth.
-    return Math.max(fromPool.mock.rotationCostBps, toPool.mock.rotationCostBps);
+    throw new Error("Dex1Adapter is disabled in live runtime.");
   }
 
   async buildEnterRequest(input: BuildEnterRequestInput): Promise<VaultEnterRequest> {
-    const request: VaultEnterRequest = {
+    return {
       target: input.pool.target,
       pool: input.pool.pool,
       tokenIn: input.pool.tokenIn,
@@ -55,11 +50,10 @@ export class Dex1Adapter implements StrategyAdapter {
       netApyBps: input.netApyBps,
       intendedHoldSeconds: input.intendedHoldSeconds
     };
-    return request;
   }
 
   async buildExitRequest(input: BuildExitRequestInput): Promise<VaultExitRequest> {
-    const request: VaultExitRequest = {
+    return {
       target: input.pool.target,
       pool: input.pool.pool,
       lpToken: input.pool.lpToken,
@@ -71,6 +65,5 @@ export class Dex1Adapter implements StrategyAdapter {
       pair: input.pool.pair,
       protocol: input.pool.protocol
     };
-    return request;
   }
 }

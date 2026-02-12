@@ -16,7 +16,7 @@ interface DecideInput {
   position: Position | null;
   snapshots: PoolSnapshot[];
   previousSnapshots: PoolSnapshot[];
-  stablePricesUsd: { AUSD: number; USDC: number };
+  stablePricesUsd: Record<string, number>;
 }
 
 export class DecisionService {

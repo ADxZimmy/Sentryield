@@ -18,14 +18,6 @@ export enum DecisionReasonCode {
   NO_ELIGIBLE_POOL = 9
 }
 
-export interface PoolMockInputs {
-  tvlUsd: number;
-  rewardRatePerSecond: number;
-  priceImpactBps: number;
-  rotationCostBps: number;
-  protocolFeeBps: number;
-}
-
 export interface PoolConfig {
   id: string;
   protocol: string;
@@ -39,7 +31,9 @@ export interface PoolConfig {
   tokenIn: Address;
   rewardTokenSymbol: string;
   baseApyBps: number;
-  mock: PoolMockInputs;
+  rewardRatePerSecond: number;
+  protocolFeeBps: number;
+  rotationCostBps: number;
 }
 
 export interface TokenConfig {

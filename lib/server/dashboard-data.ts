@@ -35,6 +35,7 @@ interface BotSnapshot {
   incentiveAprBps: number;
   netApyBps: number;
   slippageBps: number;
+  rewardTokenPriceUsd: number;
 }
 
 interface BotDecision {
@@ -260,7 +261,8 @@ function sanitizeSnapshots(input: unknown): BotSnapshot[] {
       timestamp,
       incentiveAprBps: safeNumber(snapshot.incentiveAprBps),
       netApyBps: safeNumber(snapshot.netApyBps),
-      slippageBps: safeNumber(snapshot.slippageBps)
+      slippageBps: safeNumber(snapshot.slippageBps),
+      rewardTokenPriceUsd: safeNumber((snapshot as { rewardTokenPriceUsd?: unknown }).rewardTokenPriceUsd)
     });
   }
 
@@ -476,25 +478,27 @@ function mapGuardStatus(
     DEFAULT_APR_CLIFF_THRESHOLD_PCT
   );
 
-  const ausdPrice = envNumber("PRICE_AUSD_USD", 1);
-  const usdcPrice = envNumber("PRICE_USDC_USD", 1);
-  const depegCurrent = Math.max(
-    Math.abs(ausdPrice - 1) * 100,
-    Math.abs(usdcPrice - 1) * 100
-  );
-
   const latestSnapshot = getLatestSnapshot(
     activePoolId
       ? state.snapshots.filter((snapshot) => snapshot.poolId === activePoolId)
       : state.snapshots
   );
+  const hasLiveStablePrice = Boolean(
+    latestSnapshot && Number.isFinite(latestSnapshot.rewardTokenPriceUsd) && latestSnapshot.rewardTokenPriceUsd > 0
+  );
+  const depegCurrent = hasLiveStablePrice
+    ? Math.abs((latestSnapshot?.rewardTokenPriceUsd ?? 1) - 1) * 100
+    : 0;
+  const depegStatus = hasLiveStablePrice
+    ? thresholdToLevel(depegCurrent, depegThreshold)
+    : "yellow";
   const slippageCurrent = bpsToPercent(latestSnapshot?.slippageBps ?? 0);
   const aprDropCurrent = getCurrentAprDropPercent(state.snapshots, activePoolId);
 
   return {
     depegGuard: {
       threshold: round(depegThreshold, 2),
-      status: thresholdToLevel(depegCurrent, depegThreshold),
+      status: depegStatus,
       currentValue: round(depegCurrent, 2)
     },
     slippageLimit: {

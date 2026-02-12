@@ -28,66 +28,54 @@ export class CurvanceAdapter implements StrategyAdapter {
   constructor(private readonly publicClient: PublicClient) {}
 
   async fetchPoolState(pool: PoolConfig): Promise<PoolOnChainState> {
-    let tvlUsd = pool.mock.tvlUsd;
+    const totalShares = await this.publicClient.readContract({
+      address: pool.pool,
+      abi: CURVANCE_CTOKEN_ABI,
+      functionName: "totalSupply"
+    });
+    const totalAssets = await this.publicClient.readContract({
+      address: pool.pool,
+      abi: CURVANCE_CTOKEN_ABI,
+      functionName: "previewRedeem",
+      args: [totalShares]
+    });
+    const decimals = await this.publicClient.readContract({
+      address: pool.tokenIn,
+      abi: ERC20_DECIMALS_ABI,
+      functionName: "decimals"
+    });
 
-    try {
-      const totalShares = await this.publicClient.readContract({
-        address: pool.pool,
-        abi: CURVANCE_CTOKEN_ABI,
-        functionName: "totalSupply"
-      });
-      const totalAssets = await this.publicClient.readContract({
-        address: pool.pool,
-        abi: CURVANCE_CTOKEN_ABI,
-        functionName: "previewRedeem",
-        args: [totalShares]
-      });
-      const decimals = await this.publicClient.readContract({
-        address: pool.tokenIn,
-        abi: ERC20_DECIMALS_ABI,
-        functionName: "decimals"
-      });
-
-      // v1 assumes USDC ~= $1.00; replace with oracle-derived valuation if needed.
-      tvlUsd = Number(totalAssets) / 10 ** Number(decimals);
-    } catch {
-      // Fallback to local config if read paths are unavailable on a given RPC.
-      tvlUsd = pool.mock.tvlUsd;
-    }
+    // USDC pool valuation uses token units converted to USD nominal.
+    const tvlUsd = Number(totalAssets) / 10 ** Number(decimals);
 
     return {
       tvlUsd,
-      rewardRatePerSecond: pool.mock.rewardRatePerSecond,
+      rewardRatePerSecond: pool.rewardRatePerSecond,
       rewardTokenSymbol: pool.rewardTokenSymbol,
       baseApyBps: pool.baseApyBps,
-      protocolFeeBps: pool.mock.protocolFeeBps
+      protocolFeeBps: pool.protocolFeeBps
     };
   }
 
   async estimatePriceImpactBps(pool: PoolConfig, amountIn: bigint): Promise<number> {
     if (amountIn <= 0n) return 0;
 
-    try {
-      const shares = await this.publicClient.readContract({
-        address: pool.pool,
-        abi: CURVANCE_CTOKEN_ABI,
-        functionName: "previewDeposit",
-        args: [amountIn]
-      });
-      const assetsOut = await this.publicClient.readContract({
-        address: pool.pool,
-        abi: CURVANCE_CTOKEN_ABI,
-        functionName: "previewRedeem",
-        args: [shares]
-      });
+    const shares = await this.publicClient.readContract({
+      address: pool.pool,
+      abi: CURVANCE_CTOKEN_ABI,
+      functionName: "previewDeposit",
+      args: [amountIn]
+    });
+    const assetsOut = await this.publicClient.readContract({
+      address: pool.pool,
+      abi: CURVANCE_CTOKEN_ABI,
+      functionName: "previewRedeem",
+      args: [shares]
+    });
 
-      if (assetsOut >= amountIn) return 0;
-      const loss = amountIn - assetsOut;
-      return Number((loss * 10_000n) / amountIn);
-    } catch {
-      // Conservative fallback for unavailable read paths.
-      return pool.mock.priceImpactBps;
-    }
+    if (assetsOut >= amountIn) return 0;
+    const loss = amountIn - assetsOut;
+    return Number((loss * 10_000n) / amountIn);
   }
 
   async estimateRotationCostBps(
@@ -97,8 +85,9 @@ export class CurvanceAdapter implements StrategyAdapter {
   ): Promise<number> {
     if (fromPool.id === toPool.id) return 0;
     void amountIn;
-    // TODO: replace with explicit exit + enter quote path if v1 expands beyond one pool.
-    return Math.max(fromPool.mock.rotationCostBps, toPool.mock.rotationCostBps);
+    // Rotation cost estimate is an explicit config constant until multi-pool
+    // quote stitching is implemented.
+    return Math.max(fromPool.rotationCostBps, toPool.rotationCostBps);
   }
 
   async buildEnterRequest(input: BuildEnterRequestInput): Promise<VaultEnterRequest> {
