@@ -27,7 +27,14 @@ interface DepositUsdcCardProps {
 
 type PendingAutomation =
   | {
-      type: "deposit" | "withdraw";
+      type: "withdraw";
+      amount: string;
+      queuedAtMs: number;
+    }
+  | null;
+
+type PendingDepositIntent =
+  | {
       amount: string;
       queuedAtMs: number;
     }
@@ -66,9 +73,11 @@ export function DepositUsdcCard({
     "approve" | "deposit" | "legacy_transfer" | "withdraw" | null
   >(null);
   const [pendingAutomation, setPendingAutomation] = useState<PendingAutomation>(null);
+  const [pendingDepositIntent, setPendingDepositIntent] = useState<PendingDepositIntent>(null);
   const [isQueueingExit, setIsQueueingExit] = useState(false);
   const [automationInfo, setAutomationInfo] = useState<string | null>(null);
-  const [resumeDepositAfterApprove, setResumeDepositAfterApprove] = useState<string | null>(null);
+  const [resumeQueuedDepositAfterApprove, setResumeQueuedDepositAfterApprove] =
+    useState<string | null>(null);
   const [lastSubmittedDepositAmount, setLastSubmittedDepositAmount] = useState<string | null>(null);
   const [lastSubmittedWithdrawAmount, setLastSubmittedWithdrawAmount] = useState<string | null>(null);
   const { address, isConnected } = useAccount();
@@ -215,10 +224,7 @@ export function DepositUsdcCard({
     refetchHasOpenLpPosition
   ]);
 
-  const queueExitForAutomation = async (
-    intent: "deposit" | "withdraw",
-    amount: string
-  ): Promise<void> => {
+  const queueExitForAutomation = async (amount: string): Promise<void> => {
     if (!liveModeArmed) {
       setLocalError(
         "Live mode is currently disarmed. Auto-exit cannot complete until LIVE_MODE_ARMED=true."
@@ -243,7 +249,7 @@ export function DepositUsdcCard({
         throw new Error(payload.error ?? `Exit command failed: ${response.status}`);
       }
       setPendingAutomation({
-        type: intent,
+        type: "withdraw",
         amount,
         queuedAtMs: Date.now()
       });
@@ -262,133 +268,85 @@ export function DepositUsdcCard({
   };
 
   useEffect(() => {
-    if (!pendingAutomation) return;
+    if (!pendingAutomation && !pendingDepositIntent) return;
     const timer = setInterval(() => {
       void refetchHasOpenLpPosition();
       void refetchMaxWithdraw();
     }, 5_000);
     return () => clearInterval(timer);
-  }, [pendingAutomation, refetchHasOpenLpPosition, refetchMaxWithdraw]);
+  }, [pendingAutomation, pendingDepositIntent, refetchHasOpenLpPosition, refetchMaxWithdraw]);
 
   useEffect(() => {
-    if (!pendingAutomation) return;
+    if (!pendingDepositIntent) return;
     if (hasOpenLpPosition) return;
     if (!isConnected || isWrongNetwork || isBusy) return;
-    if (!destinationAddress) return;
-
-    if (pendingAutomation.type === "deposit") {
-      if (!tokenAddress) {
-        setPendingAutomation(null);
-        setLocalError("USDC token address is not configured correctly.");
-        return;
-      }
-
-      let amountRaw: bigint;
-      try {
-        amountRaw = parseUnits(pendingAutomation.amount, usdcDecimals);
-      } catch {
-        setPendingAutomation(null);
-        setLocalError(`Amount format invalid for ${usdcDecimals}-decimals USDC.`);
-        return;
-      }
-      if (amountRaw <= 0n) {
-        setPendingAutomation(null);
-        setLocalError("Deposit amount must be greater than zero.");
-        return;
-      }
-      if (walletBalanceValue !== null && amountRaw > walletBalanceValue) {
-        setPendingAutomation(null);
-        setLocalError("Insufficient USDC wallet balance for queued deposit.");
-        return;
-      }
-
-      setDepositAmount(pendingAutomation.amount);
-      setPendingAutomation(null);
-      setAutomationInfo("Vault is parked in USDC. Continuing your deposit.");
-
-      if (isVaultUserFlowAvailable && allowanceValue < amountRaw) {
-        setPendingAction("approve");
-        setResumeDepositAfterApprove(pendingAutomation.amount);
-        writeContract({
-          abi: erc20Abi,
-          address: tokenAddress,
-          functionName: "approve",
-          args: [destinationAddress, amountRaw],
-          chainId
-        });
-        return;
-      }
-
-      if (isVaultUserFlowAvailable) {
-        setPendingAction("deposit");
-        writeContract({
-          abi: TREASURY_VAULT_USER_ABI,
-          address: destinationAddress,
-          functionName: "depositUsdc",
-          args: [amountRaw],
-          chainId
-        });
-        setLastSubmittedDepositAmount(pendingAutomation.amount);
-        return;
-      }
-
-      setPendingAction("legacy_transfer");
-      writeContract({
-        abi: erc20Abi,
-        address: tokenAddress,
-        functionName: "transfer",
-        args: [destinationAddress, amountRaw],
-        chainId
-      });
-      setLastSubmittedDepositAmount(pendingAutomation.amount);
+    if (!destinationAddress || !tokenAddress) {
+      setPendingDepositIntent(null);
+      setLocalError("Vault or token address is not configured correctly.");
       return;
     }
 
-    if (pendingAutomation.type === "withdraw") {
-      if (!address) {
-        setPendingAutomation(null);
-        setLocalError("Wallet address is unavailable.");
-        return;
-      }
-      let amountRaw: bigint;
-      try {
-        amountRaw = parseUnits(pendingAutomation.amount, usdcDecimals);
-      } catch {
-        setPendingAutomation(null);
-        setLocalError(`Amount format invalid for ${usdcDecimals}-decimals USDC.`);
-        return;
-      }
-      if (amountRaw <= 0n) {
-        setPendingAutomation(null);
-        setLocalError("Withdraw amount must be greater than zero.");
-        return;
-      }
-      if (amountRaw > maxWithdrawValue) {
-        const waitingMs = Date.now() - pendingAutomation.queuedAtMs;
-        if (waitingMs > 120_000) {
-          setPendingAutomation(null);
-          setLocalError("Queued withdraw amount exceeds your updated withdrawable balance.");
-          return;
-        }
-        setAutomationInfo("Exit confirmed. Waiting for withdrawable balance to refresh.");
-        return;
-      }
+    const queued = pendingDepositIntent;
+    let amountRaw: bigint;
+    try {
+      amountRaw = parseUnits(queued.amount, usdcDecimals);
+    } catch {
+      setPendingDepositIntent(null);
+      setLocalError(`Amount format invalid for ${usdcDecimals}-decimals USDC.`);
+      return;
+    }
+    if (amountRaw <= 0n) {
+      setPendingDepositIntent(null);
+      setLocalError("Deposit amount must be greater than zero.");
+      return;
+    }
+    if (walletBalanceValue !== null && amountRaw > walletBalanceValue) {
+      setPendingDepositIntent(null);
+      setLocalError("Insufficient USDC wallet balance for queued deposit.");
+      return;
+    }
 
-      setWithdrawAmount(pendingAutomation.amount);
-      setPendingAutomation(null);
-      setAutomationInfo("Vault is parked in USDC. Continuing your withdraw.");
-      setPendingAction("withdraw");
+    setDepositAmount(queued.amount);
+    setPendingDepositIntent(null);
+    setAutomationInfo("Vault is parked in USDC. Continuing your queued deposit.");
+
+    if (isVaultUserFlowAvailable && allowanceValue < amountRaw) {
+      setPendingAction("approve");
+      setResumeQueuedDepositAfterApprove(queued.amount);
+      writeContract({
+        abi: erc20Abi,
+        address: tokenAddress,
+        functionName: "approve",
+        args: [destinationAddress, amountRaw],
+        chainId
+      });
+      return;
+    }
+
+    if (isVaultUserFlowAvailable) {
+      setPendingAction("deposit");
       writeContract({
         abi: TREASURY_VAULT_USER_ABI,
         address: destinationAddress,
-        functionName: "withdrawToWallet",
-        args: [amountRaw, address],
+        functionName: "depositUsdc",
+        args: [amountRaw],
         chainId
       });
-      setLastSubmittedWithdrawAmount(pendingAutomation.amount);
+      setLastSubmittedDepositAmount(queued.amount);
+      return;
     }
+
+    setPendingAction("legacy_transfer");
+    writeContract({
+      abi: erc20Abi,
+      address: tokenAddress,
+      functionName: "transfer",
+      args: [destinationAddress, amountRaw],
+      chainId
+    });
+    setLastSubmittedDepositAmount(queued.amount);
   }, [
-    pendingAutomation,
+    pendingDepositIntent,
     hasOpenLpPosition,
     isConnected,
     isWrongNetwork,
@@ -401,26 +359,81 @@ export function DepositUsdcCard({
     allowanceValue,
     writeContract,
     chainId,
-    address,
-    maxWithdrawValue
+    address
   ]);
 
   useEffect(() => {
-    if (!resumeDepositAfterApprove) return;
+    if (!pendingAutomation) return;
+    if (hasOpenLpPosition) return;
+    if (!isConnected || isWrongNetwork || isBusy) return;
+    if (!destinationAddress || !address) return;
+
+    let amountRaw: bigint;
+    try {
+      amountRaw = parseUnits(pendingAutomation.amount, usdcDecimals);
+    } catch {
+      setPendingAutomation(null);
+      setLocalError(`Amount format invalid for ${usdcDecimals}-decimals USDC.`);
+      return;
+    }
+    if (amountRaw <= 0n) {
+      setPendingAutomation(null);
+      setLocalError("Withdraw amount must be greater than zero.");
+      return;
+    }
+    if (amountRaw > maxWithdrawValue) {
+      const waitingMs = Date.now() - pendingAutomation.queuedAtMs;
+      if (waitingMs > 120_000) {
+        setPendingAutomation(null);
+        setLocalError("Queued withdraw amount exceeds your updated withdrawable balance.");
+        return;
+      }
+      setAutomationInfo("Exit confirmed. Waiting for withdrawable balance to refresh.");
+      return;
+    }
+
+    setWithdrawAmount(pendingAutomation.amount);
+    setPendingAutomation(null);
+    setAutomationInfo("Vault is parked in USDC. Continuing your withdraw.");
+    setPendingAction("withdraw");
+    writeContract({
+      abi: TREASURY_VAULT_USER_ABI,
+      address: destinationAddress,
+      functionName: "withdrawToWallet",
+      args: [amountRaw, address],
+      chainId
+    });
+    setLastSubmittedWithdrawAmount(pendingAutomation.amount);
+  }, [
+    pendingAutomation,
+    hasOpenLpPosition,
+    isConnected,
+    isWrongNetwork,
+    isBusy,
+    destinationAddress,
+    address,
+    usdcDecimals,
+    maxWithdrawValue,
+    writeContract,
+    chainId
+  ]);
+
+  useEffect(() => {
+    if (!resumeQueuedDepositAfterApprove) return;
     if (!isConfirmed || pendingAction !== "approve") return;
     if (!destinationAddress) return;
 
     let amountRaw: bigint;
     try {
-      amountRaw = parseUnits(resumeDepositAfterApprove, usdcDecimals);
+      amountRaw = parseUnits(resumeQueuedDepositAfterApprove, usdcDecimals);
     } catch {
-      setResumeDepositAfterApprove(null);
+      setResumeQueuedDepositAfterApprove(null);
       setLocalError(`Amount format invalid for ${usdcDecimals}-decimals USDC.`);
       return;
     }
     setPendingAction("deposit");
-    setAutomationInfo("Approval confirmed. Continuing your deposit.");
-    setResumeDepositAfterApprove(null);
+    setAutomationInfo("Approval confirmed. Continuing your queued deposit.");
+    setResumeQueuedDepositAfterApprove(null);
     writeContract({
       abi: TREASURY_VAULT_USER_ABI,
       address: destinationAddress,
@@ -428,9 +441,9 @@ export function DepositUsdcCard({
       args: [amountRaw],
       chainId
     });
-    setLastSubmittedDepositAmount(resumeDepositAfterApprove);
+    setLastSubmittedDepositAmount(resumeQueuedDepositAfterApprove);
   }, [
-    resumeDepositAfterApprove,
+    resumeQueuedDepositAfterApprove,
     isConfirmed,
     pendingAction,
     destinationAddress,
@@ -476,7 +489,13 @@ export function DepositUsdcCard({
 
     if (isVaultUserFlowAvailable) {
       if (hasOpenLpPosition) {
-        void queueExitForAutomation("deposit", depositAmount);
+        setPendingDepositIntent({
+          amount: depositAmount,
+          queuedAtMs: Date.now()
+        });
+        setAutomationInfo(
+          "Deposit request queued. It will execute automatically once the vault is parked in USDC."
+        );
         return;
       }
 
@@ -554,7 +573,7 @@ export function DepositUsdcCard({
       return;
     }
     if (hasOpenLpPosition) {
-      void queueExitForAutomation("withdraw", withdrawAmount);
+      void queueExitForAutomation(withdrawAmount);
       return;
     }
     if (amountRaw > maxWithdrawValue) {
@@ -648,7 +667,7 @@ export function DepositUsdcCard({
               : isConfirming
                 ? "Waiting For Confirmation..."
                 : isVaultUserFlowAvailable && hasOpenLpPosition
-                  ? "Auto Exit + Deposit"
+                  ? "Queue Deposit Request"
                 : isVaultUserFlowAvailable && needsApproval
                   ? "Approve USDC"
                   : "Deposit USDC"}
@@ -657,7 +676,8 @@ export function DepositUsdcCard({
 
         {isVaultUserFlowAvailable && hasOpenLpPosition ? (
           <p className="text-xs text-muted-foreground">
-            Active LP detected. Deposit will auto-queue Exit to USDC, then continue.
+            Active LP detected. Deposit requests are queued and execute when vault liquidity is
+            parked in USDC.
           </p>
         ) : null}
 
@@ -706,7 +726,7 @@ export function DepositUsdcCard({
         {receiptError ? <p className="text-xs text-warning">{receiptError.message}</p> : null}
         {isConfirmed && pendingAction === "approve" ? (
           <p className="text-xs text-success">
-            Approval confirmed. Click Deposit USDC to complete the deposit.
+            Approval confirmed. Continuing deposit flow.
           </p>
         ) : null}
         {isConfirmed && pendingAction === "deposit" ? (

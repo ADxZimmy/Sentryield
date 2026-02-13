@@ -68,23 +68,31 @@ function normalizeAddressList(values: string[]): string[] {
   return [...new Set(values.filter((value) => isAddress(value)).map((value) => value.toLowerCase()))];
 }
 
+function normalizeHttpUrl(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return trimmed;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
 function resolveOldBotStateUrl(): string | null {
   const explicit = envString("MIGRATION_OLD_BOT_STATE_URL");
-  if (explicit) return explicit;
+  if (explicit) return normalizeHttpUrl(explicit);
   return null;
 }
 
 function resolveOldBotControlBaseUrl(): string | null {
   const explicit = envString("MIGRATION_OLD_BOT_CONTROL_URL");
-  if (explicit) return explicit.replace(/\/$/, "");
+  if (explicit) return normalizeHttpUrl(explicit).replace(/\/$/, "");
 
   const stateUrl = resolveOldBotStateUrl();
   if (!stateUrl) return null;
   return stateUrl.replace(/\/state\/?$/i, "");
 }
 
-function resolveStatusToken(): string {
+function resolveOldBotStatusToken(): string {
   return (
+    envString("MIGRATION_OLD_BOT_STATE_AUTH_TOKEN") ||
     envString("MIGRATION_BOT_STATE_AUTH_TOKEN") ||
     envString("BOT_STATE_AUTH_TOKEN") ||
     envString("BOT_STATUS_AUTH_TOKEN")
@@ -201,7 +209,7 @@ async function readOldBotStatus(): Promise<BotStatusSummary> {
     };
   }
 
-  const token = resolveStatusToken();
+  const token = resolveOldBotStatusToken();
   try {
     const response = await fetch(stateUrl, {
       headers: token
@@ -239,13 +247,14 @@ async function readOldBotStatus(): Promise<BotStatusSummary> {
       stateUrl,
       controlBaseUrl
     };
-  } catch {
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "unknown error";
     return {
       configured: true,
       reachable: false,
       healthy: null,
       ready: null,
-      reason: "Failed to reach old bot state endpoint.",
+      reason: `Failed to reach old bot state endpoint (${stateUrl}): ${detail}`,
       stateUrl,
       controlBaseUrl
     };
@@ -300,9 +309,10 @@ export async function queueOldVaultExit(): Promise<QueueOldExitResult> {
     };
   }
 
-  const token = resolveStatusToken();
+  const token = resolveOldBotStatusToken();
+  const targetUrl = `${controlBase}/controls/exit`;
   try {
-    const response = await fetch(`${controlBase}/controls/exit`, {
+    const response = await fetch(targetUrl, {
       method: "POST",
       headers: token
         ? {
@@ -317,17 +327,18 @@ export async function queueOldVaultExit(): Promise<QueueOldExitResult> {
         ? payload.error
         : response.ok
           ? "Old vault exit queued."
-          : `Old bot returned HTTP ${response.status}.`;
+          : `Old bot returned HTTP ${response.status} at ${targetUrl}.`;
     return {
       ok: response.ok,
       status: response.status,
       message
     };
-  } catch {
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "unknown error";
     return {
       ok: false,
       status: 502,
-      message: "Failed to reach old bot controls endpoint."
+      message: `Failed to reach old bot controls endpoint (${targetUrl}): ${detail}`
     };
   }
 }

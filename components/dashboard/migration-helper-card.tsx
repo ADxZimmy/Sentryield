@@ -195,6 +195,9 @@ export function MigrationHelperCard() {
                 : "unreachable"
               : "not configured"}
           </p>
+          {status.oldBot.controlBaseUrl ? (
+            <p className="mt-1 break-all">Control URL: {status.oldBot.controlBaseUrl}</p>
+          ) : null}
           {status.oldBot.reason ? <p className="mt-1">{status.oldBot.reason}</p> : null}
         </div>
 
