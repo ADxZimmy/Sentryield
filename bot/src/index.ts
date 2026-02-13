@@ -10,6 +10,7 @@ import {
 } from "viem";
 import type { StrategyAdapter } from "./adapters/adapter.interface.js";
 import { CurvanceAdapter } from "./adapters/curvance.adapter.js";
+import { Erc4626Adapter } from "./adapters/erc4626.adapter.js";
 import {
   COINGECKO_API_BASE_URL,
   COINGECKO_ID_BY_SYMBOL,
@@ -89,7 +90,11 @@ async function main(): Promise<void> {
 
   const { publicClient, walletClient } = makeClients();
   const adapters = new Map<string, StrategyAdapter>([
-    ["curvance", new CurvanceAdapter(publicClient)]
+    ["curvance", new CurvanceAdapter(publicClient)],
+    ["morpho", new Erc4626Adapter("morpho", publicClient)],
+    ["gearbox", new Erc4626Adapter("gearbox", publicClient)],
+    ["townsquare", new Erc4626Adapter("townsquare", publicClient)],
+    ["neverland", new Erc4626Adapter("neverland", publicClient)]
   ]);
   const oracle = new LivePriceOracle({
     baseUrl: COINGECKO_API_BASE_URL,

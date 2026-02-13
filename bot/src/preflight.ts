@@ -178,7 +178,8 @@ async function main(): Promise<void> {
 
   await checkCodeExists(results, client, "vault.code", RUNTIME.vaultAddress, "Vault");
 
-  for (const pool of POOLS) {
+  const activePools = POOLS.filter((pool) => pool.enabled);
+  for (const pool of activePools) {
     await checkCodeExists(
       results,
       client,
@@ -325,7 +326,7 @@ async function main(): Promise<void> {
     );
   }
 
-  for (const pool of POOLS) {
+  for (const pool of activePools) {
     await checkAllowlist(
       results,
       client,

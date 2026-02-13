@@ -17,6 +17,7 @@ const TREASURY_VAULT_ABI = parseAbi([
   "function enterPool((address target,address pool,address tokenIn,address lpToken,uint256 amountIn,uint256 minOut,uint256 deadline,bytes data,string pair,string protocol,uint16 netApyBps,uint32 intendedHoldSeconds) request) returns (uint256 lpReceived)",
   "function exitPool((address target,address pool,address lpToken,address tokenOut,uint256 amountIn,uint256 minOut,uint256 deadline,bytes data,string pair,string protocol) request) returns (uint256 amountOut)",
   "function rotate(((address target,address pool,address lpToken,address tokenOut,uint256 amountIn,uint256 minOut,uint256 deadline,bytes data,string pair,string protocol) exitRequest,(address target,address pool,address tokenIn,address lpToken,uint256 amountIn,uint256 minOut,uint256 deadline,bytes data,string pair,string protocol,uint16 netApyBps,uint32 intendedHoldSeconds) enterRequest,uint16 oldNetApyBps,uint16 newNetApyBps,uint8 reasonCode) request) returns (uint256 amountOut,uint256 lpReceived)",
+  "function movementCapBps() view returns (uint16)",
   "error InvalidAmount()",
   "error InvalidMinOut()",
   "error TokenNotAllowlisted(address token)",
@@ -108,7 +109,17 @@ export class ExecutorService {
     const pool = this.mustGetPool(poolId);
     const adapter = this.mustGetAdapter(pool.adapterId);
     const snapshot = input.snapshots.find((s) => s.poolId === pool.id);
-    const amountIn = this.config.defaultTradeAmountRaw;
+    const amountIn = await this.resolveEnterAmount(pool.tokenIn);
+    if (amountIn <= 0n) {
+      return this.failed(
+        "ENTER",
+        {
+          code: "POLICY_BLOCKED",
+          message: "ENTER blocked: no deployable token balance available under movement caps."
+        },
+        input.position
+      );
+    }
     const deadline = BigInt(input.nowTs + this.config.txDeadlineSeconds);
 
     const request = await adapter.buildEnterRequest({
@@ -441,6 +452,36 @@ export class ExecutorService {
     } catch {
       return 0n;
     }
+  }
+
+  private async readVaultMovementCapBps(): Promise<number> {
+    try {
+      const cap = await this.publicClient.readContract({
+        address: this.config.vaultAddress,
+        abi: TREASURY_VAULT_ABI,
+        functionName: "movementCapBps"
+      });
+      const parsed = Number(cap);
+      if (Number.isFinite(parsed) && parsed > 0 && parsed <= 10_000) {
+        return parsed;
+      }
+      return 10_000;
+    } catch {
+      return 10_000;
+    }
+  }
+
+  private async resolveEnterAmount(tokenIn: Address): Promise<bigint> {
+    const balance = await this.readVaultTokenBalance(tokenIn);
+    if (balance <= 0n) return 0n;
+
+    const movementCapBps = await this.readVaultMovementCapBps();
+    const movementCapAmount = (balance * BigInt(movementCapBps)) / 10_000n;
+    const allowedByRails = movementCapAmount > 0n ? movementCapAmount : balance;
+
+    const desired = this.config.defaultTradeAmountRaw;
+    const amount = desired < allowedByRails ? desired : allowedByRails;
+    return amount <= balance ? amount : balance;
   }
 
   private async resolveBlockTimestamp(

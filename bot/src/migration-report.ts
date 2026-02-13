@@ -59,6 +59,7 @@ const VAULT_USER_FLOW_ABI = parseAbi([
   "function totalUserShares() view returns (uint256)",
   "function hasOpenLpPosition() view returns (bool)"
 ]);
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 function getRequiredAddress(name: string): Address {
   const raw = process.env[name]?.trim();
@@ -128,7 +129,7 @@ async function readVaultSnapshot(input: {
   });
 
   const poolLpBalances = await Promise.all(
-    POOLS.map(async (pool) => {
+    POOLS.filter((pool) => pool.lpToken.toLowerCase() !== ZERO_ADDRESS).map(async (pool) => {
       const balance = await client.readContract({
         address: pool.lpToken,
         abi: ERC20_ABI,

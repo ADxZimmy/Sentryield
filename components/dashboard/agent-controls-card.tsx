@@ -132,7 +132,7 @@ export function AgentControlsCard({
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="rounded-lg bg-secondary/50 p-3 text-xs text-muted-foreground">
-          <p>Minimum hold policy is 24h for automatic strategy loops.</p>
+          <p>Automatic loops have no mandatory 24h hold wait.</p>
           <p className="mt-1">
             Manual actions can override automation. Vault v1 does not support direct wallet
             withdrawals; exits park funds in vault USDC.

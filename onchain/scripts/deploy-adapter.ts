@@ -5,11 +5,13 @@ dotenv.config({ path: "../.env" });
 dotenv.config();
 
 async function main(): Promise<void> {
-  const factory = await ethers.getContractFactory("CurvanceTargetAdapter");
+  const contractName =
+    process.env.TARGET_ADAPTER_CONTRACT?.trim() || "CurvanceTargetAdapter";
+  const factory = await ethers.getContractFactory(contractName);
   const adapter = await factory.deploy();
   await adapter.waitForDeployment();
 
-  console.log(`CurvanceTargetAdapter deployed at: ${await adapter.getAddress()}`);
+  console.log(`${contractName} deployed at: ${await adapter.getAddress()}`);
 }
 
 main().catch((error) => {

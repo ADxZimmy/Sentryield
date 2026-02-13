@@ -125,9 +125,10 @@ export class DecisionService {
 
     const enteredAt = input.position?.enteredAt ?? null;
     if (enteredAt && input.nowTs - enteredAt < this.policy.minHoldSeconds) {
+      const remainingSeconds = Math.max(0, this.policy.minHoldSeconds - (input.nowTs - enteredAt));
       return this.hold(
         input.nowTs,
-        "Min hold time (24h) has not elapsed.",
+        this.minHoldReason(remainingSeconds),
         ReasonCode.MIN_HOLD_ACTIVE,
         currentPoolId
       );
@@ -248,5 +249,17 @@ export class DecisionService {
       .filter((snapshot) => snapshot.poolId === poolId)
       .sort((a, b) => b.timestamp - a.timestamp);
     return filtered[0];
+  }
+
+  private minHoldReason(remainingSeconds: number): string {
+    const holdSeconds = this.policy.minHoldSeconds;
+    if (holdSeconds <= 0) {
+      return "Min hold policy is disabled.";
+    }
+    const holdHours = holdSeconds / 3600;
+    const remainingHours = remainingSeconds / 3600;
+    return `Min hold time (${holdHours.toFixed(1)}h) active. Remaining: ${remainingHours.toFixed(
+      1
+    )}h.`;
   }
 }

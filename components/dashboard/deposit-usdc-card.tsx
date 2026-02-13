@@ -317,8 +317,8 @@ export function DepositUsdcCard({
         <p className="break-all text-xs text-muted-foreground">Vault: {vaultAddress}</p>
         <p className="break-all text-xs text-muted-foreground">USDC: {usdcTokenAddress}</p>
         <p className="rounded-md bg-secondary/50 p-2 text-xs text-muted-foreground">
-          Heads-up: strategy loops target a 24h minimum hold by default so the agent can optimize
-          rotations over time.
+          Heads-up: there is no mandatory 24h hold timer. Wallet withdrawals are available whenever
+          funds are parked in USDC; if capital is deployed, use Exit to park first.
         </p>
 
         {isVaultUserFlowAvailable ? (

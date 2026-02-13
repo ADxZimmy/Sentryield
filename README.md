@@ -52,6 +52,12 @@ Both files intentionally contain identical address payload:
 - Rehearsal script added:
   - `onchain/scripts/rehearsal-fork.ts`
   - runs: enter -> exit -> simulated bad minOut failure (nonce unchanged, no broadcast)
+- Additional ERC4626-style target adapters added:
+  - `MorphoTargetAdapter`
+  - `GearboxTargetAdapter`
+  - `TownSquareTargetAdapter`
+  - `NeverlandTargetAdapter`
+  - deploy via `TARGET_ADAPTER_CONTRACT=<name> npm run deploy:adapter:monad`
 
 ### Bot
 
@@ -69,6 +75,10 @@ Both files intentionally contain identical address payload:
   - no `pool.mock` fallbacks in runtime paths
   - scanner/adapters fail closed if onchain reads or quotes fail
   - price inputs come from live CoinGecko fetches (`STABLE_PRICE_SYMBOLS`, `COINGECKO_ID_*`)
+- Multi-protocol expansion:
+  - added ERC4626 adapter path for `morpho`, `gearbox`, `townsquare`, `neverland`
+  - pools are env-driven and **disabled by default**
+  - preflight checks only enabled pools
 
 ## Go-live steps
 
@@ -123,6 +133,14 @@ npm run build
 npm run test
 ```
 
+### Deploy protocol adapter
+
+```bash
+cd onchain
+# example
+TARGET_ADAPTER_CONTRACT=MorphoTargetAdapter npm run deploy:adapter:monad
+```
+
 ### Fork rehearsal
 
 ```bash
@@ -174,6 +192,17 @@ npm run migration:report
 - Bot starts in training wheels mode (`ENTER_ONLY=true`) for initial monitoring window.
 - Alerting/observability enabled for failed simulations, pauses, and execution errors.
 - Private keys stored in secure secret manager (not plaintext files).
+
+## Enabling an additional protocol (safe rollout)
+
+1. Deploy protocol target adapter contract:
+   - `TARGET_ADAPTER_CONTRACT=<ProtocolTargetAdapter> npm run deploy:adapter:monad`
+2. Set protocol env vars in bot runtime (addresses + APY params), keep `<PROTOCOL>_ENABLED=false`.
+3. Add adapter/pool/pool-target addresses to vault allowlists (owner/multisig flow).
+4. Run `cd bot && npm run preflight` and confirm no FAILs.
+5. Set `<PROTOCOL>_ENABLED=true` for one protocol only.
+6. Keep `LIVE_MODE_ARMED=false` for first cycle validation.
+7. Verify snapshots/decision quality, then arm live mode.
 
 ## True Live Test Runbook (UI deposit + broadcast)
 

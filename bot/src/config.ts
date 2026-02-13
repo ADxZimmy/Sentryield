@@ -36,6 +36,9 @@ interface CurvanceMainnetConfig {
 const CHAIN_CONFIG = JSON.parse(
   readFileSync(CHAIN_CONFIG_PATH, "utf8")
 ) as CurvanceMainnetConfig;
+const PAIRS = ["AUSD/MON", "USDC/MON", "WMON/MON", "shMON/MON", "kMON/MON"] as const;
+const CURVANCE_USDC_MARKET_8EE9 = "0x8EE9FC28B8Da872c38A496e9dDB9700bb7261774" as Address;
+const CURVANCE_USDC_MARKET_7C9D = "0x7C9d4f1695C6282Da5e5509Aa51fC9fb417C6f1d" as Address;
 
 function envNumber(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -66,6 +69,21 @@ function envString(name: string, fallback: string): string {
   return trimmed || fallback;
 }
 
+function envAddress(name: string, fallback: Address = ZERO_ADDRESS): Address {
+  return envString(name, fallback) as Address;
+}
+
+function envPair(
+  name: string,
+  fallback: (typeof PAIRS)[number]
+): (typeof PAIRS)[number] {
+  const value = envString(name, fallback);
+  if (PAIRS.includes(value as (typeof PAIRS)[number])) {
+    return value as (typeof PAIRS)[number];
+  }
+  throw new Error(`Invalid pair for ${name}: ${value}`);
+}
+
 function envCsvUpper(name: string, fallback: string[]): string[] {
   const raw = process.env[name];
   if (!raw) return fallback;
@@ -82,8 +100,10 @@ export const TOKENS: TokenConfig = {
   WMON: CHAIN_CONFIG.tokens.WMON
 };
 
+const MIN_HOLD_SECONDS = Math.max(0, envNumber("MIN_HOLD_SECONDS", 0));
+
 export const POLICY: PolicyConfig = {
-  minHoldSeconds: 24 * 60 * 60,
+  minHoldSeconds: MIN_HOLD_SECONDS,
   rotationDeltaApyBps: 200,
   maxPaybackHours: 72,
   depegThresholdBps: 100,
@@ -91,6 +111,21 @@ export const POLICY: PolicyConfig = {
   aprCliffDropBps: 5000,
   txDeadlineSeconds: envNumber("TX_DEADLINE_SECONDS", 1_800)
 };
+
+const CURVANCE_TARGET_ADAPTER = envAddress("CURVANCE_TARGET_ADAPTER_ADDRESS");
+const CURVANCE_BASE_APY_BPS = envNumber("BASE_APY_BPS_CURVANCE_USDC", 420);
+const CURVANCE_REWARD_RATE_PER_SECOND = envNumber("CURVANCE_REWARD_RATE_PER_SECOND", 0);
+const CURVANCE_PROTOCOL_FEE_BPS = envNumber("CURVANCE_PROTOCOL_FEE_BPS", 8);
+const CURVANCE_ROTATION_COST_BPS = envNumber("CURVANCE_ROTATION_COST_BPS", 12);
+
+const MORPHO_DEFAULT_PAIR = envPair("MORPHO_PAIR", "USDC/MON");
+const MORPHO_TOKEN_IN_ADDRESS = envAddress("MORPHO_TOKEN_IN_ADDRESS", TOKENS.USDC);
+const MORPHO_TARGET_ADAPTER_ADDRESS = envAddress("MORPHO_TARGET_ADAPTER_ADDRESS");
+const MORPHO_BASE_APY_BPS = envNumber("BASE_APY_BPS_MORPHO", 390);
+const MORPHO_REWARD_TOKEN_SYMBOL = envString("MORPHO_REWARD_TOKEN_SYMBOL", "USDC");
+const MORPHO_REWARD_RATE_PER_SECOND = envNumber("MORPHO_REWARD_RATE_PER_SECOND", 0);
+const MORPHO_PROTOCOL_FEE_BPS = envNumber("MORPHO_PROTOCOL_FEE_BPS", 8);
+const MORPHO_ROTATION_COST_BPS = envNumber("MORPHO_ROTATION_COST_BPS", 14);
 
 export const POOLS: PoolConfig[] = [
   {
@@ -101,14 +136,151 @@ export const POOLS: PoolConfig[] = [
     enabled: true,
     adapterId: "curvance",
     tokenIn: TOKENS.USDC,
-    target: (process.env.CURVANCE_TARGET_ADAPTER_ADDRESS ?? ZERO_ADDRESS) as Address,
+    target: CURVANCE_TARGET_ADAPTER,
     pool: CHAIN_CONFIG.curvance.usdcMarket,
     lpToken: CHAIN_CONFIG.curvance.receiptToken,
-    baseApyBps: envNumber("BASE_APY_BPS_CURVANCE_USDC", 420),
+    baseApyBps: CURVANCE_BASE_APY_BPS,
     rewardTokenSymbol: "USDC",
-    rewardRatePerSecond: envNumber("CURVANCE_REWARD_RATE_PER_SECOND", 0),
-    protocolFeeBps: envNumber("CURVANCE_PROTOCOL_FEE_BPS", 8),
-    rotationCostBps: envNumber("CURVANCE_ROTATION_COST_BPS", 12)
+    rewardRatePerSecond: CURVANCE_REWARD_RATE_PER_SECOND,
+    protocolFeeBps: CURVANCE_PROTOCOL_FEE_BPS,
+    rotationCostBps: CURVANCE_ROTATION_COST_BPS
+  },
+  {
+    id: "curvance-usdc-market-8ee9",
+    protocol: "Curvance",
+    pair: "USDC/MON",
+    tier: "S",
+    enabled: envBool("CURVANCE_USDC_MARKET_8EE9_ENABLED", false),
+    adapterId: "curvance",
+    tokenIn: TOKENS.USDC,
+    target: CURVANCE_TARGET_ADAPTER,
+    pool: envAddress("CURVANCE_USDC_MARKET_8EE9_POOL_ADDRESS", CURVANCE_USDC_MARKET_8EE9),
+    lpToken: envAddress(
+      "CURVANCE_USDC_MARKET_8EE9_LP_TOKEN_ADDRESS",
+      envAddress("CURVANCE_USDC_MARKET_8EE9_POOL_ADDRESS", CURVANCE_USDC_MARKET_8EE9)
+    ),
+    baseApyBps: envNumber("BASE_APY_BPS_CURVANCE_USDC_8EE9", CURVANCE_BASE_APY_BPS),
+    rewardTokenSymbol: "USDC",
+    rewardRatePerSecond: CURVANCE_REWARD_RATE_PER_SECOND,
+    protocolFeeBps: CURVANCE_PROTOCOL_FEE_BPS,
+    rotationCostBps: CURVANCE_ROTATION_COST_BPS
+  },
+  {
+    id: "curvance-usdc-market-7c9d",
+    protocol: "Curvance",
+    pair: "USDC/MON",
+    tier: "S",
+    enabled: envBool("CURVANCE_USDC_MARKET_7C9D_ENABLED", false),
+    adapterId: "curvance",
+    tokenIn: TOKENS.USDC,
+    target: CURVANCE_TARGET_ADAPTER,
+    pool: envAddress("CURVANCE_USDC_MARKET_7C9D_POOL_ADDRESS", CURVANCE_USDC_MARKET_7C9D),
+    lpToken: envAddress(
+      "CURVANCE_USDC_MARKET_7C9D_LP_TOKEN_ADDRESS",
+      envAddress("CURVANCE_USDC_MARKET_7C9D_POOL_ADDRESS", CURVANCE_USDC_MARKET_7C9D)
+    ),
+    baseApyBps: envNumber("BASE_APY_BPS_CURVANCE_USDC_7C9D", CURVANCE_BASE_APY_BPS),
+    rewardTokenSymbol: "USDC",
+    rewardRatePerSecond: CURVANCE_REWARD_RATE_PER_SECOND,
+    protocolFeeBps: CURVANCE_PROTOCOL_FEE_BPS,
+    rotationCostBps: CURVANCE_ROTATION_COST_BPS
+  },
+  {
+    id: "morpho-usdc-vault",
+    protocol: "Morpho",
+    pair: MORPHO_DEFAULT_PAIR,
+    tier: "S",
+    enabled: envBool("MORPHO_ENABLED", false),
+    adapterId: "morpho",
+    tokenIn: MORPHO_TOKEN_IN_ADDRESS,
+    target: MORPHO_TARGET_ADAPTER_ADDRESS,
+    pool: envAddress("MORPHO_POOL_ADDRESS"),
+    lpToken: envAddress("MORPHO_LP_TOKEN_ADDRESS", envAddress("MORPHO_POOL_ADDRESS")),
+    baseApyBps: MORPHO_BASE_APY_BPS,
+    rewardTokenSymbol: MORPHO_REWARD_TOKEN_SYMBOL,
+    rewardRatePerSecond: MORPHO_REWARD_RATE_PER_SECOND,
+    protocolFeeBps: MORPHO_PROTOCOL_FEE_BPS,
+    rotationCostBps: MORPHO_ROTATION_COST_BPS
+  },
+  {
+    id: "morpho-usdc-vault-7899",
+    protocol: "Morpho",
+    pair: envPair("MORPHO_POOL_2_PAIR", MORPHO_DEFAULT_PAIR),
+    tier: "S",
+    enabled: envBool("MORPHO_POOL_2_ENABLED", false),
+    adapterId: "morpho",
+    tokenIn: envAddress("MORPHO_POOL_2_TOKEN_IN_ADDRESS", MORPHO_TOKEN_IN_ADDRESS),
+    target: envAddress("MORPHO_POOL_2_TARGET_ADAPTER_ADDRESS", MORPHO_TARGET_ADAPTER_ADDRESS),
+    pool: envAddress("MORPHO_POOL_2_ADDRESS"),
+    lpToken: envAddress(
+      "MORPHO_POOL_2_LP_TOKEN_ADDRESS",
+      envAddress("MORPHO_POOL_2_ADDRESS")
+    ),
+    baseApyBps: envNumber("BASE_APY_BPS_MORPHO_POOL_2", MORPHO_BASE_APY_BPS),
+    rewardTokenSymbol: envString("MORPHO_POOL_2_REWARD_TOKEN_SYMBOL", MORPHO_REWARD_TOKEN_SYMBOL),
+    rewardRatePerSecond: envNumber(
+      "MORPHO_POOL_2_REWARD_RATE_PER_SECOND",
+      MORPHO_REWARD_RATE_PER_SECOND
+    ),
+    protocolFeeBps: envNumber("MORPHO_POOL_2_PROTOCOL_FEE_BPS", MORPHO_PROTOCOL_FEE_BPS),
+    rotationCostBps: envNumber("MORPHO_POOL_2_ROTATION_COST_BPS", MORPHO_ROTATION_COST_BPS)
+  },
+  {
+    id: "gearbox-usdc-vault",
+    protocol: "Gearbox",
+    pair: envPair("GEARBOX_PAIR", "USDC/MON"),
+    tier: "S",
+    enabled: envBool("GEARBOX_ENABLED", false),
+    adapterId: "gearbox",
+    tokenIn: envAddress("GEARBOX_TOKEN_IN_ADDRESS", TOKENS.USDC),
+    target: envAddress("GEARBOX_TARGET_ADAPTER_ADDRESS"),
+    pool: envAddress("GEARBOX_POOL_ADDRESS"),
+    lpToken: envAddress("GEARBOX_LP_TOKEN_ADDRESS", envAddress("GEARBOX_POOL_ADDRESS")),
+    baseApyBps: envNumber("BASE_APY_BPS_GEARBOX", 380),
+    rewardTokenSymbol: envString("GEARBOX_REWARD_TOKEN_SYMBOL", "USDC"),
+    rewardRatePerSecond: envNumber("GEARBOX_REWARD_RATE_PER_SECOND", 0),
+    protocolFeeBps: envNumber("GEARBOX_PROTOCOL_FEE_BPS", 9),
+    rotationCostBps: envNumber("GEARBOX_ROTATION_COST_BPS", 15)
+  },
+  {
+    id: "townsquare-usdc-vault",
+    protocol: "TownSquare",
+    pair: envPair("TOWNSQUARE_PAIR", "USDC/MON"),
+    tier: "S",
+    enabled: envBool("TOWNSQUARE_ENABLED", false),
+    adapterId: "townsquare",
+    tokenIn: envAddress("TOWNSQUARE_TOKEN_IN_ADDRESS", TOKENS.USDC),
+    target: envAddress("TOWNSQUARE_TARGET_ADAPTER_ADDRESS"),
+    pool: envAddress("TOWNSQUARE_POOL_ADDRESS"),
+    lpToken: envAddress(
+      "TOWNSQUARE_LP_TOKEN_ADDRESS",
+      envAddress("TOWNSQUARE_POOL_ADDRESS")
+    ),
+    baseApyBps: envNumber("BASE_APY_BPS_TOWNSQUARE", 360),
+    rewardTokenSymbol: envString("TOWNSQUARE_REWARD_TOKEN_SYMBOL", "USDC"),
+    rewardRatePerSecond: envNumber("TOWNSQUARE_REWARD_RATE_PER_SECOND", 0),
+    protocolFeeBps: envNumber("TOWNSQUARE_PROTOCOL_FEE_BPS", 9),
+    rotationCostBps: envNumber("TOWNSQUARE_ROTATION_COST_BPS", 16)
+  },
+  {
+    id: "neverland-usdc-vault",
+    protocol: "Neverland",
+    pair: envPair("NEVERLAND_PAIR", "USDC/MON"),
+    tier: "S",
+    enabled: envBool("NEVERLAND_ENABLED", false),
+    adapterId: "neverland",
+    tokenIn: envAddress("NEVERLAND_TOKEN_IN_ADDRESS", TOKENS.USDC),
+    target: envAddress("NEVERLAND_TARGET_ADAPTER_ADDRESS"),
+    pool: envAddress("NEVERLAND_POOL_ADDRESS"),
+    lpToken: envAddress(
+      "NEVERLAND_LP_TOKEN_ADDRESS",
+      envAddress("NEVERLAND_POOL_ADDRESS")
+    ),
+    baseApyBps: envNumber("BASE_APY_BPS_NEVERLAND", 350),
+    rewardTokenSymbol: envString("NEVERLAND_REWARD_TOKEN_SYMBOL", "USDC"),
+    rewardRatePerSecond: envNumber("NEVERLAND_REWARD_RATE_PER_SECOND", 0),
+    protocolFeeBps: envNumber("NEVERLAND_PROTOCOL_FEE_BPS", 10),
+    rotationCostBps: envNumber("NEVERLAND_ROTATION_COST_BPS", 16)
   }
 ];
 
@@ -133,8 +305,20 @@ if (!RUNTIME.dryRun && !RUNTIME.executorPrivateKey) {
 if (!RUNTIME.dryRun && RUNTIME.vaultAddress === ZERO_ADDRESS) {
   throw new Error("VAULT_ADDRESS is required when DRY_RUN=false");
 }
-if (!RUNTIME.dryRun && POOLS.some((pool) => pool.target === ZERO_ADDRESS)) {
-  throw new Error("CURVANCE_TARGET_ADAPTER_ADDRESS is required when DRY_RUN=false");
+if (
+  !RUNTIME.dryRun &&
+  POOLS.some(
+    (pool) =>
+      pool.enabled &&
+      (pool.target === ZERO_ADDRESS ||
+        pool.pool === ZERO_ADDRESS ||
+        pool.lpToken === ZERO_ADDRESS ||
+        pool.tokenIn === ZERO_ADDRESS)
+  )
+) {
+  throw new Error(
+    "Enabled pools require non-zero target/pool/lpToken/tokenIn addresses when DRY_RUN=false."
+  );
 }
 if (!RUNTIME.dryRun && !RUNTIME.liveModeArmed) {
   console.warn(

@@ -22,9 +22,9 @@ export function AgentHowItWorksCard() {
           capital into the selected pool.
         </p>
         <p>
-          3) Minimum hold time is 24h by policy for automatic loops. Manual operator actions can
-          pause, exit to USDC parking, or rotate to another pool. User wallet withdrawals are
-          available only while capital is parked in USDC.
+          3) Automatic loops do not enforce a 24h hold wait. Manual operator actions can pause,
+          exit to USDC parking, or rotate to another pool. User wallet withdrawals are available
+          while capital is parked in USDC.
         </p>
         <p>
           4) Yield comes from pool APY + incentives minus fees/costs. The dashboard reflects live
