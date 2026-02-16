@@ -1,7 +1,7 @@
 "use client";
 
 import { createConfig, http } from "wagmi";
-import { coinbaseWallet, injected, walletConnect } from "wagmi/connectors";
+import { coinbaseWallet, injected, metaMask, walletConnect } from "wagmi/connectors";
 import { monadMainnet } from "@/lib/wallet/monad-chain";
 
 const rpcUrl = process.env.NEXT_PUBLIC_MONAD_RPC_URL || "https://rpc.monad.xyz";
@@ -13,13 +13,15 @@ const configuredIconUrl = process.env.NEXT_PUBLIC_APP_ICON_URL?.trim() || "";
 const iconUrl =
   configuredIconUrl !== ""
     ? encodeURI(configuredIconUrl)
-    : `${appBaseUrl}/Sentryield%20Icon%20Black.png`;
+    : `${appBaseUrl}/SentryieldIconBlack.png`;
+const shouldEnableMetaMaskConnector = typeof window !== "undefined";
 
 const connectors = [
+  ...(shouldEnableMetaMaskConnector ? [metaMask()] : []),
   injected(),
   coinbaseWallet({
     appName: "Sentryield",
-    appLogoUrl: "/Sentryield%20Icon%20Black.svg"
+    appLogoUrl: iconUrl
   }),
   ...(walletConnectProjectId
     ? [
@@ -40,6 +42,7 @@ const connectors = [
 export const wagmiConfig = createConfig({
   chains: [monadMainnet],
   connectors,
+  multiInjectedProviderDiscovery: true,
   transports: {
     [monadMainnet.id]: http(rpcUrl)
   }

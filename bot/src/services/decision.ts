@@ -17,6 +17,7 @@ interface DecideInput {
   snapshots: PoolSnapshot[];
   previousSnapshots: PoolSnapshot[];
   stablePricesUsd: Record<string, number>;
+  deployableEntryPoolIds?: Set<string>;
 }
 
 export class DecisionService {
@@ -32,6 +33,9 @@ export class DecisionService {
       const pool = this.poolById.get(snapshot.poolId);
       return pool?.enabled && pool.tier === "S";
     });
+    const deployableEligibleSnapshots = input.deployableEntryPoolIds
+      ? eligibleSnapshots.filter((snapshot) => input.deployableEntryPoolIds?.has(snapshot.poolId))
+      : eligibleSnapshots;
 
     if (eligibleSnapshots.length === 0) {
       return this.hold(input.nowTs, "No eligible Tier-S pools found.", ReasonCode.NO_ELIGIBLE_POOL);
@@ -91,8 +95,15 @@ export class DecisionService {
         );
       }
 
-      const candidate = this.pickBestCandidate(eligibleSnapshots);
+      const candidate = this.pickBestCandidate(deployableEligibleSnapshots);
       if (!candidate) {
+        if (input.deployableEntryPoolIds && deployableEligibleSnapshots.length === 0) {
+          return this.hold(
+            input.nowTs,
+            "No deployable token balance available under movement caps.",
+            ReasonCode.NO_ELIGIBLE_POOL
+          );
+        }
         return this.hold(
           input.nowTs,
           "No candidate passed slippage guard for entry.",

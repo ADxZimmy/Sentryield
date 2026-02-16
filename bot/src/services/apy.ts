@@ -11,6 +11,9 @@ interface LivePriceOracleConfig {
   coingeckoIdBySymbol: Record<string, string>;
   timeoutMs: number;
   cacheTtlMs: number;
+  rateLimitCooldownMs?: number;
+  staleFallbackTtlMs?: number;
+  warningCooldownMs?: number;
 }
 
 interface CacheEntry {
@@ -28,6 +31,11 @@ export interface PriceOracleTelemetry {
 
 export class LivePriceOracle implements PriceOracle {
   private readonly cache = new Map<string, CacheEntry>();
+  private readonly rateLimitCooldownMs: number;
+  private readonly staleFallbackTtlMs: number;
+  private readonly warningCooldownMs: number;
+  private rateLimitedUntilMs = 0;
+  private readonly warningLastLoggedAt = new Map<string, number>();
   private telemetry: PriceOracleTelemetry = {
     cacheFreshHits: 0,
     staleFallbackHits: 0,
@@ -36,7 +44,14 @@ export class LivePriceOracle implements PriceOracle {
     fetchFailures: 0
   };
 
-  constructor(private readonly config: LivePriceOracleConfig) {}
+  constructor(private readonly config: LivePriceOracleConfig) {
+    this.rateLimitCooldownMs = Math.max(1_000, config.rateLimitCooldownMs ?? 300_000);
+    this.staleFallbackTtlMs = Math.max(
+      config.cacheTtlMs,
+      config.staleFallbackTtlMs ?? 300_000
+    );
+    this.warningCooldownMs = Math.max(0, config.warningCooldownMs ?? 300_000);
+  }
 
   async getPriceUsd(symbol: string): Promise<number> {
     const normalized = symbol.trim().toUpperCase();
@@ -60,7 +75,10 @@ export class LivePriceOracle implements PriceOracle {
       const staleCached = this.readCachedValue(normalized, true);
       if (staleCached !== null) {
         this.telemetry.staleFallbackHits += 1;
-        console.warn(
+        // Keep stale fallback warm to avoid hammering the API while degraded.
+        this.writeCache(normalized, staleCached, this.staleFallbackTtlMs);
+        this.warnWithCooldown(
+          `single:${normalized}`,
           `[price-oracle] Using stale cached price for ${normalized}: ${toErrorMessage(error)}`
         );
         return staleCached;
@@ -71,26 +89,38 @@ export class LivePriceOracle implements PriceOracle {
 
   async getStablePricesUsd(): Promise<Record<string, number>> {
     const stableSymbols = this.normalizeSymbols(this.config.stableSymbols);
+    const freshCached = this.readCachedSnapshot(stableSymbols, false);
+    if (freshCached) {
+      this.telemetry.cacheFreshHits += 1;
+      return freshCached;
+    }
+
     try {
       const values = await this.fetchPrices(stableSymbols);
-      for (const [symbol, value] of Object.entries(values)) {
-        this.writeCache(symbol, value);
-      }
+      this.writeCacheSnapshot(values);
       this.telemetry.networkFetchSuccesses += 1;
       return values;
     } catch (error) {
       this.telemetry.fetchFailures += 1;
-      const fallback = this.readCachedSnapshot(stableSymbols);
+      const fallback = this.readCachedSnapshot(stableSymbols, true);
       if (fallback) {
         this.telemetry.stableFallbackHits += 1;
-        console.warn(
+        this.writeCacheSnapshot(fallback, this.staleFallbackTtlMs);
+        this.warnWithCooldown(
+          "stable:fallback",
           `[price-oracle] Using stale cached stable prices: ${toErrorMessage(error)}`
         );
         return fallback;
       }
-      throw new Error(
-        `Stable price fetch failed and no cached fallback is available: ${toErrorMessage(error)}`
+
+      const hardFallback = Object.fromEntries(stableSymbols.map((symbol) => [symbol, 1]));
+      this.telemetry.stableFallbackHits += 1;
+      this.writeCacheSnapshot(hardFallback, this.staleFallbackTtlMs);
+      this.warnWithCooldown(
+        "stable:hard-fallback",
+        `[price-oracle] Falling back to $1.00 stable prices (no cache): ${toErrorMessage(error)}`
       );
+      return hardFallback;
     }
   }
 
@@ -104,6 +134,12 @@ export class LivePriceOracle implements PriceOracle {
     const uniqueSymbols = [...new Set(symbols.map((value) => value.trim().toUpperCase()))];
     if (!uniqueSymbols.length) {
       throw new Error("Price fetch requested with empty symbol set.");
+    }
+
+    const nowMs = Date.now();
+    if (nowMs < this.rateLimitedUntilMs) {
+      const waitSeconds = Math.max(1, Math.ceil((this.rateLimitedUntilMs - nowMs) / 1000));
+      throw new Error(`CoinGecko rate-limit cooldown active (${waitSeconds}s remaining).`);
     }
 
     const ids = uniqueSymbols.map((symbol) => {
@@ -129,6 +165,9 @@ export class LivePriceOracle implements PriceOracle {
         cache: "no-store"
       });
       if (!response.ok) {
+        if (response.status === 429) {
+          this.rateLimitedUntilMs = Date.now() + this.rateLimitCooldownMs;
+        }
         throw new Error(`CoinGecko returned ${response.status}`);
       }
 
@@ -158,12 +197,12 @@ export class LivePriceOracle implements PriceOracle {
     return [...new Set(symbols.map((value) => value.trim().toUpperCase()))];
   }
 
-  private writeCache(symbol: string, value: number): void {
+  private writeCache(symbol: string, value: number, ttlMs = this.config.cacheTtlMs): void {
     const normalized = symbol.trim().toUpperCase();
     const now = Date.now();
     this.cache.set(normalized, {
       value,
-      expiresAt: now + this.config.cacheTtlMs
+      expiresAt: now + ttlMs
     });
   }
 
@@ -175,14 +214,40 @@ export class LivePriceOracle implements PriceOracle {
     return cached.value;
   }
 
-  private readCachedSnapshot(symbols: string[]): Record<string, number> | null {
+  private readCachedSnapshot(
+    symbols: string[],
+    allowStale: boolean
+  ): Record<string, number> | null {
     const result: Record<string, number> = {};
     for (const symbol of symbols) {
-      const value = this.readCachedValue(symbol, true);
+      const value = this.readCachedValue(symbol, allowStale);
       if (value === null) return null;
       result[symbol] = value;
     }
     return result;
+  }
+
+  private writeCacheSnapshot(
+    values: Record<string, number>,
+    ttlMs = this.config.cacheTtlMs
+  ): void {
+    for (const [symbol, value] of Object.entries(values)) {
+      this.writeCache(symbol, value, ttlMs);
+    }
+  }
+
+  private warnWithCooldown(key: string, message: string): void {
+    if (this.warningCooldownMs <= 0) {
+      console.warn(message);
+      return;
+    }
+    const nowMs = Date.now();
+    const lastLoggedAt = this.warningLastLoggedAt.get(key) ?? 0;
+    if (nowMs - lastLoggedAt < this.warningCooldownMs) {
+      return;
+    }
+    this.warningLastLoggedAt.set(key, nowMs);
+    console.warn(message);
   }
 }
 

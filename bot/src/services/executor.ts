@@ -102,6 +102,10 @@ export class ExecutorService {
     }
   }
 
+  async getDeployableEnterAmount(tokenIn: Address): Promise<bigint> {
+    return this.resolveEnterAmount(tokenIn);
+  }
+
   private async enter(input: ExecuteInput): Promise<ExecutionResult> {
     const poolId = input.decision.chosenPoolId;
     if (!poolId) throw new Error("ENTER decision missing chosenPoolId");

@@ -18,7 +18,10 @@ import {
   POOLS,
   POLICY,
   PRICE_ORACLE_CACHE_TTL_MS,
+  PRICE_ORACLE_RATE_LIMIT_COOLDOWN_MS,
+  PRICE_ORACLE_STALE_FALLBACK_TTL_MS,
   PRICE_ORACLE_TIMEOUT_MS,
+  PRICE_ORACLE_WARN_COOLDOWN_MS,
   RUNTIME,
   STABLE_PRICE_SYMBOLS,
   TOKENS
@@ -64,6 +67,32 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+async function resolveDeployableEntryPoolIds(
+  snapshots: PoolSnapshot[],
+  executor: ExecutorService
+): Promise<Set<string>> {
+  const deployableByToken = new Map<string, bigint>();
+  const deployablePoolIds = new Set<string>();
+
+  for (const snapshot of snapshots) {
+    const pool = POOL_BY_ID.get(snapshot.poolId);
+    if (!pool) continue;
+
+    const token = pool.tokenIn;
+    let deployableAmount = deployableByToken.get(token);
+    if (deployableAmount === undefined) {
+      deployableAmount = await executor.getDeployableEnterAmount(token);
+      deployableByToken.set(token, deployableAmount);
+    }
+
+    if (deployableAmount > 0n) {
+      deployablePoolIds.add(pool.id);
+    }
+  }
+
+  return deployablePoolIds;
+}
+
 function makeClients(): {
   publicClient: PublicClient;
   walletClient: WalletClient | null;
@@ -101,7 +130,10 @@ async function main(): Promise<void> {
     stableSymbols: STABLE_PRICE_SYMBOLS,
     coingeckoIdBySymbol: COINGECKO_ID_BY_SYMBOL,
     timeoutMs: PRICE_ORACLE_TIMEOUT_MS,
-    cacheTtlMs: PRICE_ORACLE_CACHE_TTL_MS
+    cacheTtlMs: PRICE_ORACLE_CACHE_TTL_MS,
+    rateLimitCooldownMs: PRICE_ORACLE_RATE_LIMIT_COOLDOWN_MS,
+    staleFallbackTtlMs: PRICE_ORACLE_STALE_FALLBACK_TTL_MS,
+    warningCooldownMs: PRICE_ORACLE_WARN_COOLDOWN_MS
   });
 
   const scanner = new ScannerService(
@@ -217,12 +249,14 @@ async function main(): Promise<void> {
       await db.addSnapshots(snapshots);
 
       const stablePricesUsd = await oracle.getStablePricesUsd();
+      const deployableEntryPoolIds = await resolveDeployableEntryPoolIds(snapshots, executor);
       const autoDecision = await decisionService.decide({
         nowTs,
         position: stateBefore.position,
         snapshots,
         previousSnapshots: stateBefore.snapshots,
-        stablePricesUsd
+        stablePricesUsd,
+        deployableEntryPoolIds
       });
       const manualAction = startedStatusServer?.consumePendingAction() ?? null;
       const decision = applyOperatorOverrides({

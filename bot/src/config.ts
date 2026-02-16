@@ -320,6 +320,18 @@ export const COINGECKO_API_BASE_URL = envString(
 );
 export const PRICE_ORACLE_TIMEOUT_MS = envNumber("PRICE_ORACLE_TIMEOUT_MS", 8_000);
 export const PRICE_ORACLE_CACHE_TTL_MS = envNumber("PRICE_ORACLE_CACHE_TTL_MS", 30_000);
+export const PRICE_ORACLE_RATE_LIMIT_COOLDOWN_MS = envNumber(
+  "PRICE_ORACLE_RATE_LIMIT_COOLDOWN_MS",
+  300_000
+);
+export const PRICE_ORACLE_STALE_FALLBACK_TTL_MS = envNumber(
+  "PRICE_ORACLE_STALE_FALLBACK_TTL_MS",
+  300_000
+);
+export const PRICE_ORACLE_WARN_COOLDOWN_MS = envNumber(
+  "PRICE_ORACLE_WARN_COOLDOWN_MS",
+  300_000
+);
 export const COINGECKO_ID_BY_SYMBOL: Record<string, string> = {
   USDC: envString("COINGECKO_ID_USDC", "usd-coin"),
   MON: envString("COINGECKO_ID_MON", "monad"),

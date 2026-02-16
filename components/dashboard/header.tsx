@@ -23,9 +23,56 @@ function shortAddress(address: string): string {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
+function getConnectorMeta(connectorName: string, connectorId: string): {
+  label: string;
+  description: string;
+  rank: number;
+  badge: string | null;
+} {
+  const normalized = `${connectorName} ${connectorId}`.toLowerCase();
+  if (normalized.includes("metamask")) {
+    return {
+      label: "MetaMask",
+      description: "Recommended for desktop EVM wallet flows.",
+      rank: 0,
+      badge: "Recommended"
+    };
+  }
+  if (normalized.includes("injected")) {
+    return {
+      label: "Browser Wallet",
+      description: "Use Rabby, Brave, Phantom EVM, or any injected wallet.",
+      rank: 1,
+      badge: null
+    };
+  }
+  if (normalized.includes("coinbase")) {
+    return {
+      label: "Coinbase Wallet",
+      description: "Works with Coinbase Wallet browser extension and app.",
+      rank: 2,
+      badge: null
+    };
+  }
+  if (normalized.includes("walletconnect")) {
+    return {
+      label: "WalletConnect (QR)",
+      description: "Scan QR with mobile wallets.",
+      rank: 3,
+      badge: "Mobile"
+    };
+  }
+  return {
+    label: connectorName,
+    description: "Standard EVM wallet connector.",
+    rank: 10,
+    badge: null
+  };
+}
+
 export function Header({ status }: HeaderProps) {
   const [walletError, setWalletError] = useState<string | null>(null);
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, connector: activeConnector } = useAccount();
   const chainId = useChainId();
   const { connect, connectors, error: connectError, isPending, variables } = useConnect();
   const { disconnect } = useDisconnect();
@@ -36,11 +83,56 @@ export function Header({ status }: HeaderProps) {
     return Number.isFinite(raw) ? raw : 143;
   }, []);
 
+  const connectorOptions = useMemo(() => {
+    return connectors
+      .map((connector, index) => {
+        const connectorName =
+          typeof connector === "object" &&
+          connector !== null &&
+          "name" in connector &&
+          typeof connector.name === "string"
+            ? connector.name
+            : `Wallet ${index + 1}`;
+        const connectorId =
+          typeof connector === "object" &&
+          connector !== null &&
+          "id" in connector &&
+          typeof connector.id === "string"
+            ? connector.id
+            : `connector-${index}`;
+        const connectorUid =
+          typeof connector === "object" &&
+          connector !== null &&
+          "uid" in connector &&
+          typeof connector.uid === "string"
+            ? connector.uid
+            : connectorId;
+
+        return {
+          connector,
+          connectorId,
+          connectorName,
+          connectorUid,
+          ...getConnectorMeta(connectorName, connectorId)
+        };
+      })
+      .sort((left, right) => {
+        if (left.rank !== right.rank) return left.rank - right.rank;
+        return left.label.localeCompare(right.label);
+      });
+  }, [connectors]);
+
   const isWrongNetwork = isConnected && chainId !== targetChainId;
-  const hasWalletConnect = connectors.some((connector) =>
-    connector.name.toLowerCase().includes("walletconnect")
+  const hasWalletConnect = connectorOptions.some((option) =>
+    `${option.connectorName} ${option.connectorId}`.toLowerCase().includes("walletconnect")
   );
-  const pendingConnectorId = variables?.connector?.id;
+  const pendingConnectorId =
+    variables?.connector &&
+    typeof variables.connector === "object" &&
+    "id" in variables.connector &&
+    typeof variables.connector.id === "string"
+      ? variables.connector.id
+      : null;
   const activeError = walletError ?? connectError?.message ?? null;
 
   return (
@@ -95,34 +187,47 @@ export function Header({ status }: HeaderProps) {
                   ? "Connecting..."
                   : isConnected && address
                     ? shortAddress(address)
-                    : "Connect Wallet"}
+                    : "Connect EVM Wallet"}
                 <ChevronDown className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-64">
               {!isConnected ? (
                 <>
-                  <DropdownMenuLabel>Wallet adapters</DropdownMenuLabel>
-                  {connectors.map((connector) => (
-                    <DropdownMenuItem
-                      key={connector.uid}
-                      onClick={() => {
-                        setWalletError(null);
-                        connect({ connector });
-                      }}
-                    >
-                      <Wallet className="h-4 w-4" />
-                      {connector.name}
-                      {isPending && pendingConnectorId === connector.id
-                        ? " (connecting...)"
-                        : ""}
-                    </DropdownMenuItem>
-                  ))}
+                  <DropdownMenuLabel>EVM wallet adapters</DropdownMenuLabel>
+                  {connectorOptions.map(
+                    ({ connector, connectorId, connectorUid, label, description, badge }) => (
+                      <DropdownMenuItem
+                        key={connectorUid}
+                        className="items-start py-2"
+                        onClick={() => {
+                          setWalletError(null);
+                          connect({ connector });
+                        }}
+                      >
+                        <Wallet className="mt-0.5 h-4 w-4" />
+                        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                          <span className="truncate font-medium">
+                            {label}
+                            {isPending && pendingConnectorId === connectorId
+                              ? " (connecting...)"
+                              : ""}
+                          </span>
+                          <span className="text-xs text-muted-foreground">{description}</span>
+                        </div>
+                        {badge ? (
+                          <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
+                            {badge}
+                          </Badge>
+                        ) : null}
+                      </DropdownMenuItem>
+                    )
+                  )}
                   {!hasWalletConnect ? (
                     <>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem disabled>
-                        WalletConnect unavailable (set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID and redeploy)
+                        WalletConnect QR unavailable (set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID and redeploy)
                       </DropdownMenuItem>
                     </>
                   ) : null}
@@ -131,6 +236,7 @@ export function Header({ status }: HeaderProps) {
                 <>
                   <DropdownMenuLabel>
                     Connected {address ? shortAddress(address) : ""}
+                    {activeConnector ? ` via ${activeConnector.name}` : ""}
                   </DropdownMenuLabel>
                   {isWrongNetwork ? (
                     <DropdownMenuItem
