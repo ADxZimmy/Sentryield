@@ -1,0 +1,18 @@
+{
+  "chainId": 143,
+  "meta": {
+    "name": "Sentryield Vault v3 - Set Executor",
+    "description": "Multisig batch to set the executor on TreasuryVault. All calls go to the vault, value=0.",
+    "vault": "0x12E086288e8a220c565a957090198a38Ad20d2D3",
+    "adapter": "0xCD9F363C5B9BDAc667f5dfb6279698df83F11A98"
+  },
+  "transactions": [
+    {
+      "to": "0x12E086288e8a220c565a957090198a38Ad20d2D3",
+      "value": "0",
+      "data": "0x1c3c0ea8000000000000000000000000e14fc1911587896e139f2473e5f28cf7101196b3",
+      "operation": "CALL",
+      "note": "setExecutor(0xE14Fc1911587896E139F2473E5F28Cf7101196B3)"
+    }
+  ]
+}
