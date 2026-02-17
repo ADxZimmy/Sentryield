@@ -214,14 +214,14 @@ async function fetchMorphoApyRatio(
     chainId
   });
   const vault = legacyData.vaultByAddress;
-  const apyRatio = vault?.state?.apy;
+  const apyRatioRaw = vault?.state?.apy;
 
-  if (!vault || !Number.isFinite(apyRatio)) {
+  if (!vault || typeof apyRatioRaw !== "number" || !Number.isFinite(apyRatioRaw)) {
     throw new Error(`Morpho APY not found for ${address}.`);
   }
 
   return {
-    apyRatio,
+    apyRatio: apyRatioRaw,
     source: "vaultByAddress.state.apy",
     label: `${vault.name} (${vault.symbol})`
   };
