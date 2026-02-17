@@ -11,6 +11,9 @@ interface LivePriceOracleConfig {
   coingeckoIdBySymbol: Record<string, string>;
   timeoutMs: number;
   cacheTtlMs: number;
+  apiKey?: string;
+  useStaticStablePrices?: boolean;
+  staticStablePriceUsd?: number;
   rateLimitCooldownMs?: number;
   staleFallbackTtlMs?: number;
   warningCooldownMs?: number;
@@ -31,6 +34,9 @@ export interface PriceOracleTelemetry {
 
 export class LivePriceOracle implements PriceOracle {
   private readonly cache = new Map<string, CacheEntry>();
+  private readonly stableSymbolSet: Set<string>;
+  private readonly useStaticStablePrices: boolean;
+  private readonly staticStablePriceUsd: number;
   private readonly rateLimitCooldownMs: number;
   private readonly staleFallbackTtlMs: number;
   private readonly warningCooldownMs: number;
@@ -45,6 +51,13 @@ export class LivePriceOracle implements PriceOracle {
   };
 
   constructor(private readonly config: LivePriceOracleConfig) {
+    this.stableSymbolSet = new Set(this.normalizeSymbols(config.stableSymbols));
+    this.useStaticStablePrices = config.useStaticStablePrices ?? false;
+    const configuredStaticPrice = config.staticStablePriceUsd ?? 1;
+    this.staticStablePriceUsd =
+      Number.isFinite(configuredStaticPrice) && configuredStaticPrice > 0
+        ? configuredStaticPrice
+        : 1;
     this.rateLimitCooldownMs = Math.max(1_000, config.rateLimitCooldownMs ?? 300_000);
     this.staleFallbackTtlMs = Math.max(
       config.cacheTtlMs,
@@ -55,6 +68,11 @@ export class LivePriceOracle implements PriceOracle {
 
   async getPriceUsd(symbol: string): Promise<number> {
     const normalized = symbol.trim().toUpperCase();
+    if (this.useStaticStablePrices && this.stableSymbolSet.has(normalized)) {
+      this.writeCache(normalized, this.staticStablePriceUsd, this.staleFallbackTtlMs);
+      return this.staticStablePriceUsd;
+    }
+
     const freshCached = this.readCachedValue(normalized, false);
     if (freshCached !== null) {
       this.telemetry.cacheFreshHits += 1;
@@ -88,7 +106,19 @@ export class LivePriceOracle implements PriceOracle {
   }
 
   async getStablePricesUsd(): Promise<Record<string, number>> {
-    const stableSymbols = this.normalizeSymbols(this.config.stableSymbols);
+    const stableSymbols = [...this.stableSymbolSet];
+    if (!stableSymbols.length) {
+      throw new Error("Stable price fetch requested with empty symbol set.");
+    }
+
+    if (this.useStaticStablePrices) {
+      const staticValues = Object.fromEntries(
+        stableSymbols.map((symbol) => [symbol, this.staticStablePriceUsd])
+      );
+      this.writeCacheSnapshot(staticValues, this.staleFallbackTtlMs);
+      return staticValues;
+    }
+
     const freshCached = this.readCachedSnapshot(stableSymbols, false);
     if (freshCached) {
       this.telemetry.cacheFreshHits += 1;
@@ -156,11 +186,22 @@ export class LivePriceOracle implements PriceOracle {
       const endpoint = `${this.config.baseUrl.replace(/\/$/, "")}/simple/price?ids=${encodeURIComponent(
         ids.join(",")
       )}&vs_currencies=usd`;
+      const headers: Record<string, string> = {
+        Accept: "application/json"
+      };
+      const apiKey = this.config.apiKey?.trim() || "";
+      if (apiKey) {
+        const lowerBaseUrl = this.config.baseUrl.toLowerCase();
+        if (lowerBaseUrl.includes("pro-api.coingecko.com")) {
+          headers["x-cg-pro-api-key"] = apiKey;
+        } else {
+          headers["x-cg-demo-api-key"] = apiKey;
+        }
+      }
+
       const response = await fetch(endpoint, {
         method: "GET",
-        headers: {
-          Accept: "application/json"
-        },
+        headers,
         signal: controller.signal,
         cache: "no-store"
       });

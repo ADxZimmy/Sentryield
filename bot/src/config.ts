@@ -318,8 +318,11 @@ export const COINGECKO_API_BASE_URL = envString(
   "COINGECKO_API_BASE_URL",
   "https://api.coingecko.com/api/v3"
 );
+export const COINGECKO_API_KEY = envString("COINGECKO_API_KEY", "");
 export const PRICE_ORACLE_TIMEOUT_MS = envNumber("PRICE_ORACLE_TIMEOUT_MS", 8_000);
 export const PRICE_ORACLE_CACHE_TTL_MS = envNumber("PRICE_ORACLE_CACHE_TTL_MS", 30_000);
+export const USE_STATIC_STABLE_PRICES = envBool("USE_STATIC_STABLE_PRICES", false);
+export const STATIC_STABLE_PRICE_USD = envNumber("STATIC_STABLE_PRICE_USD", 1);
 export const PRICE_ORACLE_RATE_LIMIT_COOLDOWN_MS = envNumber(
   "PRICE_ORACLE_RATE_LIMIT_COOLDOWN_MS",
   300_000

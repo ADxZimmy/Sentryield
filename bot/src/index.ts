@@ -13,6 +13,7 @@ import { CurvanceAdapter } from "./adapters/curvance.adapter.js";
 import { Erc4626Adapter } from "./adapters/erc4626.adapter.js";
 import {
   COINGECKO_API_BASE_URL,
+  COINGECKO_API_KEY,
   COINGECKO_ID_BY_SYMBOL,
   POOL_BY_ID,
   POOLS,
@@ -23,7 +24,9 @@ import {
   PRICE_ORACLE_TIMEOUT_MS,
   PRICE_ORACLE_WARN_COOLDOWN_MS,
   RUNTIME,
+  STATIC_STABLE_PRICE_USD,
   STABLE_PRICE_SYMBOLS,
+  USE_STATIC_STABLE_PRICES,
   TOKENS
 } from "./config.js";
 import { DecisionService } from "./services/decision.js";
@@ -131,6 +134,9 @@ async function main(): Promise<void> {
     coingeckoIdBySymbol: COINGECKO_ID_BY_SYMBOL,
     timeoutMs: PRICE_ORACLE_TIMEOUT_MS,
     cacheTtlMs: PRICE_ORACLE_CACHE_TTL_MS,
+    apiKey: COINGECKO_API_KEY,
+    useStaticStablePrices: USE_STATIC_STABLE_PRICES,
+    staticStablePriceUsd: STATIC_STABLE_PRICE_USD,
     rateLimitCooldownMs: PRICE_ORACLE_RATE_LIMIT_COOLDOWN_MS,
     staleFallbackTtlMs: PRICE_ORACLE_STALE_FALLBACK_TTL_MS,
     warningCooldownMs: PRICE_ORACLE_WARN_COOLDOWN_MS
