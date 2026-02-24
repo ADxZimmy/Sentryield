@@ -293,18 +293,25 @@ async function readBotState(
         cache: "no-store",
         next: { revalidate: 0 }
       });
-      if (response.ok) {
-        const parsed = (await response.json()) as unknown;
-        if (isRemoteStatusEnvelope(parsed)) {
-          if (parsed.healthy !== true || parsed.ready !== true) {
-            throw new Error("Remote bot endpoint is not healthy/ready.");
-          }
-          return {
-            state: toBotState(parsed.state),
-            source: "remote",
-            warnings
-          };
+      const parsed = (await response.json().catch(() => null)) as unknown;
+      if (isRemoteStatusEnvelope(parsed)) {
+        const hasStatePayload = Object.prototype.hasOwnProperty.call(parsed, "state");
+        if (!hasStatePayload) {
+          throw new Error("Remote bot endpoint missing state payload. Ensure BOT_STATE_URL points to /state.");
         }
+        if (!response.ok || parsed.healthy !== true || parsed.ready !== true) {
+          warnings.push(
+            `Remote bot status warming up (http=${response.status}, healthy=${String(parsed.healthy)}, ready=${String(parsed.ready)}). Showing latest available state.`
+          );
+        }
+        return {
+          state: toBotState(parsed.state),
+          source: "remote",
+          warnings
+        };
+      }
+
+      if (response.ok) {
         return {
           state: toBotState(parsed),
           source: "remote",

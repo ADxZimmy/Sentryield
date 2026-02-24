@@ -14,30 +14,35 @@ const iconUrl =
   configuredIconUrl !== ""
     ? encodeURI(configuredIconUrl)
     : `${appBaseUrl}/SentryieldIconBlack.png`;
-const shouldEnableMetaMaskConnector = typeof window !== "undefined";
+const hasWindow = typeof window !== "undefined";
+const hasIndexedDb = typeof indexedDB !== "undefined";
+const shouldEnableBrowserConnectors = hasWindow;
+const shouldEnableWalletConnect = hasWindow && hasIndexedDb && walletConnectProjectId !== "";
 
-const connectors = [
-  ...(shouldEnableMetaMaskConnector ? [metaMask()] : []),
-  injected(),
-  coinbaseWallet({
-    appName: "Sentryield",
-    appLogoUrl: iconUrl
-  }),
-  ...(walletConnectProjectId
-    ? [
-        walletConnect({
-          projectId: walletConnectProjectId,
-          showQrModal: true,
-          metadata: {
-            name: "Sentryield",
-            description: "Sentryield dashboard and automation controls",
-            url: appUrl,
-            icons: [iconUrl]
-          }
-        })
-      ]
-    : [])
-];
+const connectors = shouldEnableBrowserConnectors
+  ? [
+      metaMask(),
+      injected(),
+      coinbaseWallet({
+        appName: "Sentryield",
+        appLogoUrl: iconUrl
+      }),
+      ...(shouldEnableWalletConnect
+        ? [
+            walletConnect({
+              projectId: walletConnectProjectId,
+              showQrModal: true,
+              metadata: {
+                name: "Sentryield",
+                description: "Sentryield dashboard and automation controls",
+                url: appUrl,
+                icons: [iconUrl]
+              }
+            })
+          ]
+        : [])
+    ]
+  : [];
 
 export const wagmiConfig = createConfig({
   chains: [monadMainnet],
